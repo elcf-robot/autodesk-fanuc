@@ -15,7 +15,7 @@ vendor = "Fanuc";
 vendorUrl = "http://www.fanuc.com";
 legal = "Copyright (C) 2012-2022 by Autodesk, Inc.";
 certificationLevel = 2;
-minimumRevision = 45793;
+minimumRevision = 45791;
 
 longDescription = "Generic post for Fanuc.";
 
