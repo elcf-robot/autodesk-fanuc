@@ -4,7 +4,7 @@
 
   FANUC post processor configuration.
 
-  $Revision: 43731 514634d3e72da88fc022a99138c0e5374dbc073e $
+  $Revision: 43733 514634d3e72da88fc022a99138c0e5374dbc073e $
   $Date: 2022-04-01 18:27:40 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
@@ -15,7 +15,7 @@ vendor = "Fanuc";
 vendorUrl = "http://www.fanuc.com";
 legal = "Copyright (C) 2012-2022 by Autodesk, Inc.";
 certificationLevel = 2;
-minimumRevision = 45791;
+minimumRevision = 45793;
 
 longDescription = "Generic post for Fanuc.";
 
