@@ -1,0 +1,3 @@
+
+# Reclassify `.cps` files as JavaScript (for GitHub's code language statistic)
+*.cps linguist-language=JavaScript
