@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 43733 514634d3e72da88fc022a99138c0e5374dbc073e $
-  $Date: 2022-04-01 18:27:40 $
+  $Revision: 43793 b157ddfe2ebfe4ed20cf4d2babec16abcf9aa062 $
+  $Date: 2022-05-05 14:10:48 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -96,7 +96,7 @@ properties = {
   o8: {
     title      : "8 Digit program number",
     description: "Specifies that an 8 digit program number is needed.",
-    group      : "preferences",
+    group      : "formats",
     type       : "boolean",
     value      : false,
     scope      : "post"
@@ -191,7 +191,7 @@ properties = {
   useG54x4: {
     title      : "Use G54.4",
     description: "Fanuc 30i supports G54.4 for workpiece error compensation.",
-    group      : "multiAxis",
+    group      : "probing",
     type       : "boolean",
     value      : false,
     scope      : "post"
