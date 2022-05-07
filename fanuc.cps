@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 43793 b157ddfe2ebfe4ed20cf4d2babec16abcf9aa062 $
-  $Date: 2022-05-05 14:10:48 $
+  $Revision: 43794 1c0101ee6b0f3fafe614f3f83a60da4cd55021d9 $
+  $Date: 2022-05-05 19:40:20 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -353,8 +353,6 @@ var maximumLineLength = 80; // the maximum number of charaters allowed in a line
 var minimumCyclePoints = 5; // minimum number of points in cycle operation to consider for subprogram
 var cancelTiltFirst = true; // cancel G68.2 with G69 prior to G54-G59 WCS block
 var useABCPrepositioning = false; // position ABC axes prior to G68.2 block
-
-var WARNING_WORK_OFFSET = 0;
 
 var allowIndexingWCSProbing = false; // specifies that probe WCS with tool orientation is supported
 var probeVariables = {
@@ -1303,14 +1301,6 @@ function printProbeResults() {
   return currentSection.getParameter("printResults", 0) == 1;
 }
 
-var probeOutputWorkOffset = 1;
-
-function onParameter(name, value) {
-  if (name == "probe-output-work-offset") {
-    probeOutputWorkOffset = (value > 0) ? value : 1;
-  }
-}
-
 /** Returns true if the spatial vectors are significantly different. */
 function areSpatialVectorsDifferent(_vector1, _vector2) {
   return (xyzFormat.getResultingValue(_vector1.x) != xyzFormat.getResultingValue(_vector2.x)) ||
@@ -1928,6 +1918,7 @@ function setProbeAngleMethod() {
 /** Output rotation offset based on angular probing cycle. */
 function setProbeAngle() {
   if (probeVariables.outputRotationCodes) {
+    var probeOutputWorkOffset = currentSection.probeWorkOffset;
     validate(probeOutputWorkOffset <= 6, "Angular Probing only supports work offsets 1-6.");
     if (probeVariables.probeAngleMethod == "G68" && (Vector.diff(currentSection.getGlobalInitialToolAxis(), new Vector(0, 0, 1)).length > 1e-4)) {
       error(localize("You cannot use multi axis toolpaths while G68 Rotation is in effect."));
@@ -2640,6 +2631,7 @@ function onCyclePoint(x, y, z) {
 
 function getProbingArguments(cycle, updateWCS) {
   var outputWCSCode = updateWCS && currentSection.strategy == "probe";
+  var probeOutputWorkOffset = currentSection.probeWorkOffset;
   if (outputWCSCode) {
     validate(probeOutputWorkOffset <= 99, "Work offset is out of range.");
     var nextWorkOffset = hasNextSection() ? getNextSection().workOffset == 0 ? 1 : getNextSection().workOffset : -1;
