@@ -4,7 +4,7 @@
 
   FANUC post processor configuration.
 
-  $Revision: 43809 9402f830a000e97e8885d344dcc12dc65bf77998 $
+  $Revision: 43811 9402f830a000e97e8885d344dcc12dc65bf77998 $
   $Date: 2022-05-20 14:56:40 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
