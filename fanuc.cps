@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 43811 9402f830a000e97e8885d344dcc12dc65bf77998 $
-  $Date: 2022-05-20 14:56:40 $
+  $Revision: 43848 37bc23272a2019e5308eb3614c847286976debf9 $
+  $Date: 2022-06-23 22:05:07 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -2212,6 +2212,10 @@ function onCyclePoint(x, y, z) {
       );
       break;
     case "reaming":
+      if (feedFormat.getResultingValue(cycle.feedrate) != feedFormat.getResultingValue(cycle.retractFeedrate)) {
+        expandCyclePoint(x, y, z);
+        break;
+      }
       if (P > 0) {
         writeBlock(
           gRetractModal.format(98), gCycleModal.format(89),
@@ -2247,6 +2251,10 @@ function onCyclePoint(x, y, z) {
       );
       break;
     case "boring":
+      if (feedFormat.getResultingValue(cycle.feedrate) != feedFormat.getResultingValue(cycle.retractFeedrate)) {
+        expandCyclePoint(x, y, z);
+        break;
+      }
       if (P > 0) {
         writeBlock(
           gRetractModal.format(98), gCycleModal.format(89),
