@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 43848 37bc23272a2019e5308eb3614c847286976debf9 $
-  $Date: 2022-06-23 22:05:07 $
+  $Revision: 43881 db98b97d59e631419324916a1773fdc9920ddccd $
+  $Date: 2022-07-14 15:33:51 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -15,7 +15,7 @@ vendor = "Fanuc";
 vendorUrl = "http://www.fanuc.com";
 legal = "Copyright (C) 2012-2022 by Autodesk, Inc.";
 certificationLevel = 2;
-minimumRevision = 45793;
+minimumRevision = 45821;
 
 longDescription = "Generic post for Fanuc.";
 
@@ -1253,49 +1253,15 @@ function setWorkPlane(abc) {
   currentWorkPlaneABC = abc;
 }
 
-var closestABC = false; // choose closest machine angles
-var currentMachineABC;
-
 function getWorkPlaneMachineABC(workPlane, _setWorkPlane, rotate) {
   var W = workPlane; // map to global frame
 
-  var abc = machineConfiguration.getABC(W);
-  if (closestABC) {
-    if (currentMachineABC) {
-      abc = machineConfiguration.remapToABC(abc, currentMachineABC);
-    } else {
-      abc = machineConfiguration.getPreferredABC(abc);
-    }
-  } else {
-    abc = machineConfiguration.getPreferredABC(abc);
-  }
-
-  try {
-    abc = machineConfiguration.remapABC(abc);
-    if (_setWorkPlane) {
-      currentMachineABC = abc;
-    }
-  } catch (e) {
-    error(
-      localize("Machine angles not supported") + ":"
-      + conditional(machineConfiguration.isMachineCoordinate(0), " A" + abcFormat.format(abc.x))
-      + conditional(machineConfiguration.isMachineCoordinate(1), " B" + abcFormat.format(abc.y))
-      + conditional(machineConfiguration.isMachineCoordinate(2), " C" + abcFormat.format(abc.z))
-    );
-  }
+  var currentABC = isFirstSection() ? new Vector(0, 0, 0) : getCurrentDirection();
+  var abc = machineConfiguration.getABCByPreference(W, currentABC, ABC, PREFER_PREFERENCE, ENABLE_ALL);
 
   var direction = machineConfiguration.getDirection(abc);
   if (!isSameDirection(direction, W.forward)) {
     error(localize("Orientation not supported."));
-  }
-
-  if (!machineConfiguration.isABCSupported(abc)) {
-    error(
-      localize("Work plane is not supported") + ":"
-      + conditional(machineConfiguration.isMachineCoordinate(0), " A" + abcFormat.format(abc.x))
-      + conditional(machineConfiguration.isMachineCoordinate(1), " B" + abcFormat.format(abc.y))
-      + conditional(machineConfiguration.isMachineCoordinate(2), " C" + abcFormat.format(abc.z))
-    );
   }
 
   if (rotate) {
@@ -1308,7 +1274,6 @@ function getWorkPlaneMachineABC(workPlane, _setWorkPlane, rotate) {
       setRotation(R);
     }
   }
-
   return abc;
 }
 
@@ -3069,11 +3034,6 @@ function onSectionEnd() {
     }
   }
 
-  // the code below gets the machine angles from previous operation.  closestABC must also be set to true
-  if (currentSection.isMultiAxis() && currentSection.isOptimizedForMachine()) {
-    currentMachineABC = currentSection.getFinalToolAxisABC();
-  }
-
   if (isProbeOperation()) {
     writeBlock(gFormat.format(65), "P" + 9833); // spin the probe off
     if (probeVariables.probeAngleMethod != "G68") {
@@ -3233,7 +3193,7 @@ function inspectionWriteCADTransform() {
 }
 
 function inspectionWriteWorkplaneTransform() {
-  var orientation = (machineConfiguration.isMultiAxisConfiguration() && currentMachineABC != undefined) ? machineConfiguration.getOrientation(currentMachineABC) : currentSection.workPlane;
+  var orientation = machineConfiguration.isMultiAxisConfiguration() ? machineConfiguration.getOrientation(getCurrentDirection()) : currentSection.workPlane;
   var abc = orientation.getEuler2(EULER_XYZ_S);
   writeln("DPRNT[G330" +
     "*N" + getPointNumber() +
