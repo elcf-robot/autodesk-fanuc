@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 43917 137901004ca7b899eabfc93d41f02b60143d09bb $
-  $Date: 2022-08-17 18:54:31 $
+  $Revision: 44013 15bbcf7973d643e20fc10210417bd85668e7c0ea $
+  $Date: 2022-10-27 20:22:54 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -1730,12 +1730,6 @@ function onSection() {
   gMotionModal.reset();
 
   var initialPosition = getFramePosition(currentSection.getInitialPosition());
-  if (!retracted && !insertToolCall) {
-    if (getCurrentPosition().z < initialPosition.z) {
-      writeBlock(gMotionModal.format(0), zOutput.format(initialPosition.z));
-      zIsOutput = true;
-    }
-  }
 
   if (insertToolCall || !lengthCompensationActive || operationNeedsSafeStart || retracted || (!isFirstSection() && getPreviousSection().isMultiAxis())) {
     var _skipBlock = !(insertToolCall || retracted);
@@ -1781,6 +1775,11 @@ function onSection() {
     zIsOutput = true;
     gMotionModal.reset();
     if (_skipBlock) {
+      if (getCurrentPosition().z < initialPosition.z) {
+        zOutput.reset();
+        writeBlock(gMotionModal.format(0), zOutput.format(initialPosition.z));
+        zIsOutput = true;
+      }
       forceXYZ();
       var x = xOutput.format(initialPosition.x);
       var y = yOutput.format(initialPosition.y);
@@ -1788,6 +1787,10 @@ function onSection() {
     }
 
   } else {
+    if ((getCurrentPosition().z < initialPosition.z) && !retracted) {
+      writeBlock(gMotionModal.format(0), zOutput.format(initialPosition.z));
+      zIsOutput = true;
+    }
     writeBlock(
       gAbsIncModal.format(90),
       gMotionModal.format(0),
@@ -1796,7 +1799,7 @@ function onSection() {
     );
   }
 
-  validate(lengthCompensationActive, "Length compensation is not active.");
+  validate(lengthCompensationActive, "Tool length compensation is not active.");
 
   if (getProperty("useParametricFeed") &&
       hasParameter("operation-strategy") &&
