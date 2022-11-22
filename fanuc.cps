@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44025 11452e5b6c242e90bceb44f40895c87b1b47054e $
-  $Date: 2022-11-08 12:19:46 $
+  $Revision: 44031 1c0cc94eaa4c25dec1d1a22011947ec4cbf54d18 $
+  $Date: 2022-11-21 13:42:52 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -423,6 +423,7 @@ var currentWorkOffset;
 var optionalSection = false;
 var forceSpindleSpeed = false;
 var retracted = false; // specifies that the tool has been retracted to the safe plane
+var lastOperationComment = "";
 
 // used to convert blocks to optional for safeStartAllOperations, might get used outside of onSection
 var operationNeedsSafeStart = false;
@@ -457,7 +458,7 @@ function onOpen() {
     feedOutput = createVariable({prefix:"F"}, feedFormat);
   }
   sequenceNumber = getProperty("sequenceNumberStart");
-  saveShowSequenceNumbers = getProperty("showSequenceNumbers");
+  subprogramState.saveShowSequenceNumbers = getProperty("showSequenceNumbers");
   validateInitialWCS();
 
   writeln("%");
@@ -706,11 +707,11 @@ function onSection() {
 
   if (hasParameter("operation-comment")) {
     var comment = getParameter("operation-comment");
-    if (comment && ((comment !== lastOperationComment) || !patternIsActive || insertToolCall)) {
+    if (comment && ((comment !== lastOperationComment) || !subprogramState.patternIsActive || insertToolCall)) {
       writeln("");
       writeComment(comment);
       lastOperationComment = comment;
-    } else if (!patternIsActive || insertToolCall) {
+    } else if (!subprogramState.patternIsActive || insertToolCall) {
       writeln("");
     }
   } else {
@@ -806,9 +807,7 @@ function onSection() {
     inspectionProcessSectionStart();
   }
 
-  if (getProperty("useSubroutines") != "none") {
-    subprogramDefine(initialPosition, abc, retracted, zIsOutput); // define subprogram
-  }
+  subprogramDefine(initialPosition, abc, retracted, zIsOutput); // define subprogram
   retracted = false;
 }
 
@@ -850,7 +849,7 @@ function onCycleEnd() {
     gMotionModal.reset();
     writeBlock(gFormat.format(65), "P" + 9810, zOutput.format(cycle.retract)); // protected retract move
   } else {
-    if (cycleSubprogramIsActive) {
+    if (subprogramState.cycleSubprogramIsActive) {
       subprogramEnd();
     }
     if (!cycleExpanded) {
@@ -1033,9 +1032,9 @@ function onClose() {
   onImpliedCommand(COMMAND_END);
   onImpliedCommand(COMMAND_STOP_SPINDLE);
   writeBlock(mFormat.format(30)); // stop program, spindle stop, coolant off
-  if (subprograms.length > 0) {
+  if (subprogramState.subprograms.length > 0) {
     writeln("");
-    write(subprograms);
+    write(subprogramState.subprograms);
   }
 
   writeln("%");
@@ -2226,8 +2225,8 @@ function writeProgramNumber() {
 
     oFormat = createFormat({width:(getProperty("o8") ? 8 : 4), zeropad:true, decimals:0});
     writeln("O" + oFormat.format(programId) + conditional(programComment, " " + formatComment(programComment)));
-    if (typeof lastSubprogram != "undefined") {
-      lastSubprogram = programId;
+    if (typeof subprogramState.lastSubprogram != "undefined") {
+      subprogramState.lastSubprogram = programId;
     }
   } else {
     error(localize("Program name has not been specified."));
@@ -2482,16 +2481,8 @@ function writeDrillCycle(cycle, x, y, z) {
       expandCyclePoint(x, y, z);
     }
     // place cycle operation in subprogram
-    if (cycleSubprogramIsActive) {
-      if (cycleExpanded || isProbeOperation()) {
-        cycleSubprogramIsActive = false;
-      } else {
-      // call subprogram
-        subprogramCall();
-        subprogramStart(new Vector(x, y, z), new Vector(0, 0, 0), false);
-      }
-    }
-    if (incrementalMode) { // set current position to clearance height
+    handleCycleSubprogram(new Vector(x, y, z), new Vector(0, 0, 0), false);
+    if (subprogramState.incrementalMode) { // set current position to clearance height
       setCyclePosition(cycle.clearance);
     }
   } else {
@@ -2513,11 +2504,11 @@ function writeDrillCycle(cycle, x, y, z) {
           break;
         }
       }
-      if (incrementalMode) { // set current position to retract height
+      if (subprogramState.incrementalMode) { // set current position to retract height
         setCyclePosition(cycle.retract);
       }
       writeBlock(xOutput.format(x), yOutput.format(y), zOutput.format(z));
-      if (incrementalMode) { // set current position to clearance height
+      if (subprogramState.incrementalMode) { // set current position to clearance height
         setCyclePosition(cycle.clearance);
       }
     }
@@ -2526,7 +2517,7 @@ function writeDrillCycle(cycle, x, y, z) {
 
 function getCommonCycle(x, y, z, r, c) {
   forceXYZ(); // force xyz on first drill hole of any cycle
-  if (incrementalMode) {
+  if (subprogramState.incrementalMode) {
     zOutput.format(c);
     return [xOutput.format(x), yOutput.format(y),
       "Z" + xyzFormat.format(z - r),
@@ -3121,23 +3112,31 @@ function setProbeAngleMethod() {
 var SUB_UNKNOWN = 0;
 var SUB_PATTERN = 1;
 var SUB_CYCLE = 2;
-var subprograms = [];
-var currentPattern = -1;
-var firstPattern = false;
-var currentSubprogram = 0;
-var lastSubprogram = 0;
-var definedPatterns = new Array();
-var incrementalMode = false;
-var saveShowSequenceNumbers;
-var cycleSubprogramIsActive = false;
-var patternIsActive = false;
-var lastOperationComment = "";
-var incrementalSubprogram;
-validate(settings.subprograms, "Setting 'subprograms' is required but not defined.");
 
-function subprogramStart(_initialPosition, _abc, _incremental) {
+// collected state below, do not edit
+validate(settings.subprograms, "Setting 'subprograms' is required but not defined.");
+var subprogramState = {
+  subprograms            : [],          // Redirection buffer
+  newSubprogram          : false,       // Indicate if the current subprogram is new to definedSubprograms
+  currentSubprogram      : 0,           // The current subprogram number
+  lastSubprogram         : 0,           // The last subprogram number
+  definedSubprograms     : new Array(), // A collection of pattern and cycle subprograms
+  saveShowSequenceNumbers: "",          // Used to store pre-condition of "showSequenceNumbers"
+  cycleSubprogramIsActive: false,       // Indicate if it's handling a cycle subprogram
+  patternIsActive        : false,       // Indicate if it's handling a pattern subprogram
+  incrementalSubprogram  : false,       // Indicate if the current subprogram needs to go incremental mode
+  incrementalMode        : false        // Indicate if incremental mode is on
+};
+
+/**
+ * Start to redirect buffer to subprogram.
+ * @param {Vector} initialPosition Initial position
+ * @param {Vector} abc Machine axis angles
+ * @param {boolean} incremental If the subprogram needs to go incremental mode
+ */
+function subprogramStart(initialPosition, abc, incremental) {
   if (getProperty("useFilesForSubprograms")) {
-    var path = FileSystem.getCombinedPath(FileSystem.getFolderPath(getOutputPath()), currentSubprogram + "." + extension);
+    var path = FileSystem.getCombinedPath(FileSystem.getFolderPath(getOutputPath()), subprogramState.currentSubprogram + "." + extension);
     redirectToFile(path);
     writeln(settings.subprograms.startBlock.files);
   } else {
@@ -3149,28 +3148,31 @@ function subprogramStart(_initialPosition, _abc, _incremental) {
   }
 
   writeln(
-    settings.subprograms.startBlock.embedded + settings.subprograms.format.format(currentSubprogram) +
+    settings.subprograms.startBlock.embedded + settings.subprograms.format.format(subprogramState.currentSubprogram) +
     conditional(comment, formatComment(comment.substr(0, settings.comments.maximumLineLength - 2 - 6 - 1)))
   );
   setProperty("showSequenceNumbers", "false");
-  if (_incremental) {
-    setIncrementalMode(_initialPosition, _abc);
+  if (incremental) {
+    setIncrementalMode(initialPosition, abc);
   }
   gPlaneModal.reset();
   gMotionModal.reset();
 }
 
+/** Output the command for calling a subprogram by its subprogram number. */
+
 function subprogramCall() {
   if (getProperty("useFilesForSubprograms")) {
-    writeBlock(settings.subprograms.callBlock.files + settings.subprograms.format.format(currentSubprogram));
+    writeBlock(settings.subprograms.callBlock.files + settings.subprograms.format.format(subprogramState.currentSubprogram));
   } else {
-    writeBlock(settings.subprograms.callBlock.embedded + settings.subprograms.format.format(currentSubprogram));
+    writeBlock(settings.subprograms.callBlock.embedded + settings.subprograms.format.format(subprogramState.currentSubprogram));
   }
 }
 
+/** End of subprogram and close redirection. */
 function subprogramEnd() {
   if (isRedirecting()) {
-    if (firstPattern) {
+    if (subprogramState.newSubprogram) {
       var finalPosition = getFramePosition(currentSection.getFinalPosition());
       var abc;
       if (currentSection.isMultiAxis() && machineConfiguration.isMultiAxisConfiguration()) {
@@ -3185,13 +3187,13 @@ function subprogramEnd() {
         writeln(settings.subprograms.startBlock.files);
       } else {
         writeln("");
-        subprograms += getRedirectionBuffer();
+        subprogramState.subprograms += getRedirectionBuffer();
       }
     }
     forceAny();
-    firstPattern = false;
-    cycleSubprogramIsActive = false;
-    setProperty("showSequenceNumbers", saveShowSequenceNumbers);
+    subprogramState.newSubprogram = false;
+    subprogramState.cycleSubprogramIsActive = false;
+    setProperty("showSequenceNumbers", subprogramState.saveShowSequenceNumbers);
     closeRedirection();
   }
 }
@@ -3214,39 +3216,102 @@ function areSpatialBoxesSame(_box1, _box2) {
   return !areSpatialVectorsDifferent(_box1[0], _box2[0]) && !areSpatialVectorsDifferent(_box1[1], _box2[1]);
 }
 
+/**
+ * Search defined pattern subprogram by the given id.
+ * @param {number} subprogramId Subprogram Id
+ * @returns {Object} Returns defined subprogram if found, otherwise returns undefined
+ */
+function getDefinedPatternSubprogram(subprogramId) {
+  for (var i = 0; i < subprogramState.definedSubprograms.length; ++i) {
+    if ((SUB_PATTERN == subprogramState.definedSubprograms[i].type) && (subprogramId == subprogramState.definedSubprograms[i].id)) {
+      return subprogramState.definedSubprograms[i];
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Search defined cycle subprogram pattern by the given id, initialPosition, finalPosition.
+ * @param {number} subprogramId Subprogram Id
+ * @param {Vector} initialPosition Initial position of the cycle
+ * @param {Vector} finalPosition Final position of the cycle
+ * @returns {Object} Returns defined subprogram if found, otherwise returns undefined
+ */
+function getDefinedCycleSubprogram(subprogramId, initialPosition, finalPosition) {
+  for (var i = 0; i < subprogramState.definedSubprograms.length; ++i) {
+    if ((SUB_CYCLE == subprogramState.definedSubprograms[i].type) && (subprogramId == subprogramState.definedSubprograms[i].id) &&
+        !areSpatialVectorsDifferent(initialPosition, subprogramState.definedSubprograms[i].initialPosition) &&
+        !areSpatialVectorsDifferent(finalPosition, subprogramState.definedSubprograms[i].finalPosition)) {
+      return subprogramState.definedSubprograms[i];
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Creates and returns new defined subprogram
+ * @param {Section} section The section to create subprogram
+ * @param {number} subprogramId Subprogram Id
+ * @param {number} subprogramType Subprogram type, can be SUB_UNKNOWN, SUB_PATTERN or SUB_CYCLE
+ * @param {Vector} initialPosition Initial position
+ * @param {Vector} finalPosition Final position
+ * @returns {Object} Returns new defined subprogram
+ */
+function defineNewSubprogram(section, subprogramId, subprogramType, initialPosition, finalPosition) {
+  // determine if this is valid for creating a subprogram
+  isValid = subprogramIsValid(section, subprogramId, subprogramType);
+  if (isValid) {
+    subprogram = ++subprogramState.lastSubprogram;
+  }
+  subprogramState.definedSubprograms.push({
+    type           : subprogramType,
+    id             : subprogramId,
+    subProgram     : subprogram,
+    isValid        : isValid,
+    initialPosition: initialPosition,
+    finalPosition  : finalPosition
+  });
+  return subprogramState.definedSubprograms[subprogramState.definedSubprograms.length - 1];
+}
+
+/** Returns true if the given section is a pattern **/
+function isPatternOperation(section) {
+  return section.isPatterned && section.isPatterned();
+}
+
+/** Returns true if the given section is a cycle operation **/
+function isCycleOperation(section, minimumCyclePoints) {
+  return section.doesStrictCycle &&
+  (section.getNumberOfCycles() == 1) && (section.getNumberOfCyclePoints() >= minimumCyclePoints);
+}
+
+/**
+ * Define subprogram based on the property "useSubroutines"
+ * @param {Vector} _initialPosition Initial position
+ * @param {Vector} _abc Machine axis angles
+ * @param {boolean} _retracted If the tool has been retracted to the safe plane, used for patterns
+ * @param {boolean} _zIsOutput If the Z-position has been output, used for patterns
+ */
 function subprogramDefine(_initialPosition, _abc, _retracted, _zIsOutput) {
+  if (getProperty("useSubroutines") == "none") {
+    // Return early
+    return;
+  }
+
   // convert patterns into subprograms
-  var usePattern = false;
-  patternIsActive = false;
-  if (currentSection.isPatterned && currentSection.isPatterned() && (getProperty("useSubroutines") == "patterns")) {
-    currentPattern = currentSection.getPatternId();
-    firstPattern = true;
-    for (var i = 0; i < definedPatterns.length; ++i) {
-      if ((definedPatterns[i].patternType == SUB_PATTERN) && (currentPattern == definedPatterns[i].patternId)) {
-        currentSubprogram = definedPatterns[i].subProgram;
-        usePattern = definedPatterns[i].validPattern;
-        firstPattern = false;
-        break;
-      }
+  subprogramState.patternIsActive = false;
+  if (getProperty("useSubroutines") == "patterns" && isPatternOperation(currentSection)) {
+    var subprogramId = currentSection.getPatternId();
+    var subprogramType = SUB_PATTERN;
+    var subprogramDefinition = getDefinedPatternSubprogram(subprogramId);
+
+    subprogramState.newSubprogram = !subprogramDefinition;
+    if (subprogramState.newSubprogram) {
+      subprogramDefinition = defineNewSubprogram(currentSection, subprogramId, subprogramType, _initialPosition, _initialPosition);
     }
 
-    if (firstPattern) {
-      // determine if this is a valid pattern for creating a subprogram
-      usePattern = subprogramIsValid(currentSection, currentPattern, SUB_PATTERN);
-      if (usePattern) {
-        currentSubprogram = ++lastSubprogram;
-      }
-      definedPatterns.push({
-        patternType    : SUB_PATTERN,
-        patternId      : currentPattern,
-        subProgram     : currentSubprogram,
-        validPattern   : usePattern,
-        initialPosition: _initialPosition,
-        finalPosition  : _initialPosition
-      });
-    }
-
-    if (usePattern) {
+    subprogramState.currentSubprogram = subprogramDefinition.subProgram;
+    if (subprogramDefinition.isValid) {
       // make sure Z-position is output prior to subprogram call
       if (!_retracted && !_zIsOutput) {
         writeBlock(gMotionModal.format(0), zOutput.format(_initialPosition.z));
@@ -3254,10 +3319,10 @@ function subprogramDefine(_initialPosition, _abc, _retracted, _zIsOutput) {
 
       // call subprogram
       subprogramCall();
-      patternIsActive = true;
+      subprogramState.patternIsActive = true;
 
-      if (firstPattern) {
-        subprogramStart(_initialPosition, _abc, incrementalSubprogram);
+      if (subprogramState.newSubprogram) {
+        subprogramStart(_initialPosition, _abc, subprogramState.incrementalSubprogram);
       } else {
         skipRemainingSection();
         setCurrentPosition(getFramePosition(currentSection.getFinalPosition()));
@@ -3265,66 +3330,56 @@ function subprogramDefine(_initialPosition, _abc, _retracted, _zIsOutput) {
     }
   }
 
-  // Output cycle operation as subprogram
-  if (!usePattern && (getProperty("useSubroutines") == "cycles") && currentSection.doesStrictCycle &&
-      (currentSection.getNumberOfCycles() == 1) && currentSection.getNumberOfCyclePoints() >= settings.subprograms.minimumCyclePoints) {
-    var finalPosition = getFramePosition(currentSection.getFinalPosition());
-    currentPattern = currentSection.getNumberOfCyclePoints();
-    firstPattern = true;
-    for (var i = 0; i < definedPatterns.length; ++i) {
-      if ((definedPatterns[i].patternType == SUB_CYCLE) && (currentPattern == definedPatterns[i].patternId) &&
-          !areSpatialVectorsDifferent(_initialPosition, definedPatterns[i].initialPosition) &&
-          !areSpatialVectorsDifferent(finalPosition, definedPatterns[i].finalPosition)) {
-        currentSubprogram = definedPatterns[i].subProgram;
-        usePattern = definedPatterns[i].validPattern;
-        firstPattern = false;
-        break;
+  // Patterns are not used, check other cases
+  if (!subprogramState.patternIsActive) {
+    // Output cycle operation as subprogram
+    if (getProperty("useSubroutines") == "cycles" && isCycleOperation(currentSection, settings.subprograms.minimumCyclePoints)) {
+      var finalPosition = getFramePosition(currentSection.getFinalPosition());
+      var subprogramId = currentSection.getNumberOfCyclePoints();
+      var subprogramType = SUB_CYCLE;
+      var subprogramDefinition = getDefinedCycleSubprogram(subprogramId, _initialPosition, finalPosition);
+      subprogramState.newSubprogram = !subprogramDefinition;
+      if (subprogramState.newSubprogram) {
+        subprogramDefinition = defineNewSubprogram(currentSection, subprogramId, subprogramType, _initialPosition, finalPosition);
       }
+      subprogramState.currentSubprogram = subprogramDefinition.subProgram;
+      subprogramState.cycleSubprogramIsActive = subprogramDefinition.isValid;
     }
 
-    if (firstPattern) {
-      // determine if this is a valid pattern for creating a subprogram
-      usePattern = subprogramIsValid(currentSection, currentPattern, SUB_CYCLE);
-      if (usePattern) {
-        currentSubprogram = ++lastSubprogram;
-      }
-      definedPatterns.push({
-        patternType    : SUB_CYCLE,
-        patternId      : currentPattern,
-        subProgram     : currentSubprogram,
-        validPattern   : usePattern,
-        initialPosition: _initialPosition,
-        finalPosition  : finalPosition
-      });
+    // Neither patterns and cycles are used, check other operations
+    if (!subprogramState.cycleSubprogramIsActive && getProperty("useSubroutines") == "allOperations") {
+      // Output all operations as subprograms
+      subprogramState.currentSubprogram = ++subprogramState.lastSubprogram;
+      subprogramCall();
+      subprogramState.newSubprogram = true;
+      subprogramStart(_initialPosition, _abc, false);
     }
-    cycleSubprogramIsActive = usePattern;
-  }
-
-  // Output each operation as a subprogram
-  if (!usePattern && (getProperty("useSubroutines") == "allOperations")) {
-    currentSubprogram = ++lastSubprogram;
-    subprogramCall();
-    firstPattern = true;
-    subprogramStart(_initialPosition, _abc, false);
   }
 }
 
-function subprogramIsValid(_section, _patternId, _patternType) {
-  var sectionId = _section.getId();
+/**
+ * Determine if this is valid for creating a subprogram
+ * @param {Section} section The section to create subprogram
+ * @param {number} subprogramId Subprogram Id
+ * @param {number} subprogramType Subprogram type, can be SUB_UNKNOWN, SUB_PATTERN or SUB_CYCLE
+ * @returns {boolean} If this is valid for creating a subprogram
+ */
+function subprogramIsValid(section, subprogramId, subprogramType) {
+  var sectionId = section.getId();
   var numberOfSections = getNumberOfSections();
-  var validSubprogram = _patternType != SUB_CYCLE;
+  var validSubprogram = subprogramType != SUB_CYCLE;
 
   var masterPosition = new Array();
-  masterPosition[0] = getFramePosition(_section.getInitialPosition());
-  masterPosition[1] = getFramePosition(_section.getFinalPosition());
-  var tempBox = _section.getBoundingBox();
+  masterPosition[0] = getFramePosition(section.getInitialPosition());
+  masterPosition[1] = getFramePosition(section.getFinalPosition());
+  var tempBox = section.getBoundingBox();
   var masterBox = new Array();
   masterBox[0] = getFramePosition(tempBox[0]);
   masterBox[1] = getFramePosition(tempBox[1]);
 
   var rotation = getRotation();
   var translation = getTranslation();
-  incrementalSubprogram = undefined;
+  subprogramState.incrementalSubprogram = undefined;
 
   for (var i = 0; i < numberOfSections; ++i) {
     var section = getSection(i);
@@ -3332,8 +3387,8 @@ function subprogramIsValid(_section, _patternId, _patternType) {
       defineWorkPlane(section, false);
 
       // check for valid pattern
-      if (_patternType == SUB_PATTERN) {
-        if (section.getPatternId() == _patternId) {
+      if (subprogramType == SUB_PATTERN) {
+        if (section.getPatternId() == subprogramId) {
           var patternPosition = new Array();
           patternPosition[0] = getFramePosition(section.getInitialPosition());
           patternPosition[1] = getFramePosition(section.getFinalPosition());
@@ -3343,18 +3398,18 @@ function subprogramIsValid(_section, _patternId, _patternType) {
           patternBox[1] = getFramePosition(tempBox[1]);
 
           if (areSpatialBoxesSame(masterPosition, patternPosition) && areSpatialBoxesSame(masterBox, patternBox) && !section.isMultiAxis()) {
-            incrementalSubprogram = incrementalSubprogram ? incrementalSubprogram : false;
+            subprogramState.incrementalSubprogram = subprogramState.incrementalSubprogram ? subprogramState.incrementalSubprogram : false;
           } else if (!areSpatialBoxesTranslated(masterPosition, patternPosition) || !areSpatialBoxesTranslated(masterBox, patternBox)) {
             validSubprogram = false;
             break;
           } else {
-            incrementalSubprogram = true;
+            subprogramState.incrementalSubprogram = true;
           }
         }
 
       // check for valid cycle operation
-      } else if (_patternType == SUB_CYCLE) {
-        if ((section.getNumberOfCyclePoints() == _patternId) && (section.getNumberOfCycles() == 1)) {
+      } else if (subprogramType == SUB_CYCLE) {
+        if ((section.getNumberOfCyclePoints() == subprogramId) && (section.getNumberOfCycles() == 1)) {
           var patternInitial = getFramePosition(section.getInitialPosition());
           var patternFinal = getFramePosition(section.getFinalPosition());
           if (!areSpatialVectorsDifferent(patternInitial, masterPosition[0]) && !areSpatialVectorsDifferent(patternFinal, masterPosition[1])) {
@@ -3383,6 +3438,7 @@ function setAxisMode(_format, _output, _prefix, _value, _incr) {
   return _output;
 }
 
+/** Set incremental mode on **/
 function setIncrementalMode(xyz, abc) {
   xOutput = setAxisMode(xyzFormat, xOutput, "X", xyz.x, true);
   yOutput = setAxisMode(xyzFormat, yOutput, "Y", xyz.y, true);
@@ -3392,11 +3448,12 @@ function setIncrementalMode(xyz, abc) {
   cOutput = setAxisMode(abcFormat, cOutput, "C", abc.z, true);
   gAbsIncModal.reset();
   writeBlock(gAbsIncModal.format(91));
-  incrementalMode = true;
+  subprogramState.incrementalMode = true;
 }
 
+/** Set incremental mode off **/
 function setAbsoluteMode(xyz, abc) {
-  if (incrementalMode) {
+  if (subprogramState.incrementalMode) {
     xOutput = setAxisMode(xyzFormat, xOutput, "X", xyz.x, false);
     yOutput = setAxisMode(xyzFormat, yOutput, "Y", xyz.y, false);
     zOutput = setAxisMode(xyzFormat, zOutput, "Z", xyz.z, false);
@@ -3405,7 +3462,22 @@ function setAbsoluteMode(xyz, abc) {
     cOutput = setAxisMode(abcFormat, cOutput, "C", abc.z, false);
     gAbsIncModal.reset();
     writeBlock(gAbsIncModal.format(90));
-    incrementalMode = false;
+    subprogramState.incrementalMode = false;
+  }
+}
+
+/**
+ * Place cycle operation in subprogram
+ * @param {Vector} initialPosition Initial position
+ * @param {Vector} abc Machine axis angles
+ * @param {boolean} incremental If the subprogram needs to go incremental mode
+ */
+function handleCycleSubprogram(initialPosition, abc, incremental) {
+  subprogramState.cycleSubprogramIsActive &= !(cycleExpanded || isProbeOperation());
+  if (subprogramState.cycleSubprogramIsActive) {
+    // call subprogram
+    subprogramCall();
+    subprogramStart(initialPosition, abc, incremental);
   }
 }
 // <<<<< INCLUDED FROM include_files/subprograms.cpi
