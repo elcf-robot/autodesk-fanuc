@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44031 1c0cc94eaa4c25dec1d1a22011947ec4cbf54d18 $
-  $Date: 2022-11-21 13:42:52 $
+  $Revision: 44032 f90fd39426b4f8d2e9dbcad9b804f342d94cb3e9 $
+  $Date: 2022-11-21 23:18:17 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -485,7 +485,7 @@ var lengthCompensationActive = false;
 /** Disables length compensation if currently active or if forced. */
 function disableLengthCompensation(force) {
   if (lengthCompensationActive || force) {
-    validate(retracted || skipBlock, "Cannot cancel length compensation if the machine is not fully retracted.");
+    validate(retracted || skipBlocks, "Cannot cancel length compensation if the machine is not fully retracted.");
     writeBlock(gFormat.format(49));
     lengthCompensationActive = false;
   }
@@ -544,59 +544,45 @@ function setWorkPlane(abc) {
   if (!settings.workPlaneMethod.forceMultiAxisIndexing && is3D() && !machineConfiguration.isMultiAxisConfiguration()) {
     return; // ignore
   }
-  var _skipBlock = false;
-  if (!((currentWorkPlaneABC == undefined) ||
-        abcFormat.areDifferent(abc.x, currentWorkPlaneABC.x) ||
-        abcFormat.areDifferent(abc.y, currentWorkPlaneABC.y) ||
-        abcFormat.areDifferent(abc.z, currentWorkPlaneABC.z))) {
-    if (operationNeedsSafeStart) {
-      _skipBlock = true;
-    } else {
-      return; // no change
-    }
-  }
-  skipBlock = _skipBlock;
-  onCommand(COMMAND_UNLOCK_MULTI_AXIS);
+  var workplaneIsRequired = (currentWorkPlaneABC == undefined) ||
+    abcFormat.areDifferent(abc.x, currentWorkPlaneABC.x) ||
+    abcFormat.areDifferent(abc.y, currentWorkPlaneABC.y) ||
+    abcFormat.areDifferent(abc.z, currentWorkPlaneABC.z);
 
-  if (!retracted) {
-    skipBlock = _skipBlock;
-    writeRetract(Z);
-  }
+  writeStartBlocks(workplaneIsRequired, function () {
+    onCommand(COMMAND_UNLOCK_MULTI_AXIS);
+    if (!retracted) {
+      writeRetract(Z);
+    }
 
-  if (settings.workPlaneMethod.useTiltedWorkplane) {
-    if (settings.workPlaneMethod.cancelTiltFirst) {
-      skipBlock = _skipBlock;
-      cancelWorkPlane();
-    }
-    if (machineConfiguration.isMultiAxisConfiguration()) {
-      var machineABC = abc.isNonZero() ? getWorkPlaneMachineABC(currentSection.workPlane, false) : abc;
-      if (settings.workPlaneMethod.useABCPrepositioning || machineABC.isZero()) {
-        skipBlock = _skipBlock;
-        positionABC(machineABC, true);
-      }
-    }
-    if (abc.isNonZero()) {
-      skipBlock = _skipBlock;
-      gRotationModal.reset();
-      writeBlock(gRotationModal.format(68.2), "X" + xyzFormat.format(0), "Y" + xyzFormat.format(0), "Z" + xyzFormat.format(0), "I" + abcFormat.format(abc.x), "J" + abcFormat.format(abc.y), "K" + abcFormat.format(abc.z)); // set frame
-      skipBlock = _skipBlock;
-      writeBlock(gFormat.format(53.1)); // turn machine
-    } else {
-      if (!settings.workPlaneMethod.cancelTiltFirst) {
-        skipBlock = _skipBlock;
+    if (settings.workPlaneMethod.useTiltedWorkplane) {
+      if (settings.workPlaneMethod.cancelTiltFirst) {
         cancelWorkPlane();
       }
+      if (machineConfiguration.isMultiAxisConfiguration()) {
+        var machineABC = abc.isNonZero() ? getWorkPlaneMachineABC(currentSection.workPlane, false) : abc;
+        if (settings.workPlaneMethod.useABCPrepositioning || machineABC.isZero()) {
+          positionABC(machineABC, true);
+        }
+      }
+      if (abc.isNonZero()) {
+        gRotationModal.reset();
+        writeBlock(gRotationModal.format(68.2), "X" + xyzFormat.format(0), "Y" + xyzFormat.format(0), "Z" + xyzFormat.format(0), "I" + abcFormat.format(abc.x), "J" + abcFormat.format(abc.y), "K" + abcFormat.format(abc.z)); // set frame
+        writeBlock(gFormat.format(53.1)); // turn machine
+      } else {
+        if (!settings.workPlaneMethod.cancelTiltFirst) {
+          cancelWorkPlane();
+        }
+      }
+    } else {
+      positionABC(abc, true);
     }
-  } else {
-    skipBlock = _skipBlock;
-    positionABC(abc, true);
-  }
-  if (!currentSection.isMultiAxis()) {
-    skipBlock = _skipBlock;
-    onCommand(COMMAND_LOCK_MULTI_AXIS);
-  }
+    if (!currentSection.isMultiAxis()) {
+      onCommand(COMMAND_LOCK_MULTI_AXIS);
+    }
 
-  currentWorkPlaneABC = abc;
+    currentWorkPlaneABC = abc;
+  });
 }
 
 function writeToolCall(tool, insertToolCall) {
@@ -618,7 +604,6 @@ function writeToolCall(tool, insertToolCall) {
   if (insertToolCall) {
     disableLengthCompensation(false);
   }
-  skipBlock = !insertToolCall;
   writeToolBlock("T" + toolFormat.format(tool.number), mFormat.format(6));
   if (tool.comment) {
     writeComment(tool.comment);
@@ -645,13 +630,11 @@ function writeToolPreload(tool, insertToolCall) {
   if (getProperty("preloadTool")) {
     var nextTool = getNextTool(tool.number);
     if (nextTool) {
-      skipBlock = !insertToolCall;
       writeBlock("T" + toolFormat.format(nextTool.number));
     } else {
       // preload first tool
       var firstToolNumber = getFirstTool().number;
       if (tool.number != firstToolNumber) {
-        skipBlock = !insertToolCall;
         writeBlock("T" + toolFormat.format(firstToolNumber));
       }
     }
@@ -660,22 +643,23 @@ function writeToolPreload(tool, insertToolCall) {
 
 function startSpindle(insertToolCall) {
   if (tool.type != TOOL_PROBE) {
-    var outputSpindleSpeed = insertToolCall || forceSpindleSpeed || isFirstSection() ||
+    var spindleSpeedIsRequired = insertToolCall || forceSpindleSpeed || isFirstSection() ||
       rpmFormat.areDifferent(spindleSpeed, sOutput.getCurrent()) ||
       (tool.clockwise != getPreviousSection().getTool().clockwise);
 
-    maximumSpindleRPM = machineConfiguration.getMaximumSpindleSpeed() > 0 ? machineConfiguration.getMaximumSpindleSpeed() : 99999;
+    writeStartBlocks(spindleSpeedIsRequired, function () {
+      maximumSpindleRPM = machineConfiguration.getMaximumSpindleSpeed() > 0 ? machineConfiguration.getMaximumSpindleSpeed() : 99999;
 
-    if (outputSpindleSpeed || operationNeedsSafeStart) {
-      forceSpindleSpeed = false;
-      if (spindleSpeed > maximumSpindleRPM) {
-        warning(subst(localize("Spindle speed '" + spindleSpeed + " RPM' exceeds maximum value of '%1 RPM."), maximumSpindleRPM));
+      if (spindleSpeedIsRequired || operationNeedsSafeStart) {
+        forceSpindleSpeed = false;
+        if (spindleSpeed > maximumSpindleRPM) {
+          warning(subst(localize("Spindle speed '" + spindleSpeed + " RPM' exceeds maximum value of '%1 RPM."), maximumSpindleRPM));
+        }
+        if (!isTappingCycle() || (isTappingCycle() && !(getProperty("useRigidTapping") == "without"))) {
+          writeBlock(sOutput.format(spindleSpeed), mFormat.format(tool.clockwise ? 3 : 4));
+        }
       }
-      if (!isTappingCycle() || (isTappingCycle() && !(getProperty("useRigidTapping") == "without"))) {
-        skipBlock = !outputSpindleSpeed;
-        writeBlock(sOutput.format(spindleSpeed), mFormat.format(tool.clockwise ? 3 : 4));
-      }
-    }
+    });
   }
 }
 
@@ -722,32 +706,32 @@ function onSection() {
     writeSectionNotes();
   }
 
-  if (operationNeedsSafeStart && !retracted) {
-    skipBlock = true;
-    writeRetract(Z);
-  }
-
   // tool change
-  if (insertToolCall || operationNeedsSafeStart) {
+  writeStartBlocks(insertToolCall, function () {
+    if (!retracted) {
+      writeRetract(Z);
+    }
     writeToolCall(tool, insertToolCall);
-    writeToolPreload(tool, insertToolCall);
-  }
-  // onCommand(COMMAND_START_SPINDLE)
+    writeToolPreload(tool);
+  });
   startSpindle(insertToolCall);
 
   // set wcs
+  var wcsIsRequired = true;
   if (insertToolCall || operationNeedsSafeStart) {
     currentWorkOffset = undefined; // force work offset when changing tool
-    skipBlock = operationNeedsSafeStart && !newWorkOffset && !insertToolCall;
+    wcsIsRequired = newWorkOffset || insertToolCall || !operationNeedsSafeStart;
   }
   if (currentSection.workOffset != currentWorkOffset) {
-    if (settings.workPlaneMethod.cancelTiltFirst & !skipBlock) {
+    if (settings.workPlaneMethod.cancelTiltFirst && wcsIsRequired) {
       cancelWorkPlane();
     }
-    if (!skipBlock) {
+    if (wcsIsRequired) {
       forceWorkPlane();
     }
-    writeBlock(currentSection.wcs);
+    writeStartBlocks(wcsIsRequired, function () {
+      writeBlock(currentSection.wcs);
+    });
     currentWorkOffset = currentSection.workOffset;
   }
 
@@ -765,33 +749,22 @@ function onSection() {
 
   forceAny();
   gMotionModal.reset();
+  writeBlock(gPlaneModal.format(17));
 
   // prepositioning
   var initialPosition = getFramePosition(currentSection.getInitialPosition());
-
+  var safeStartIsRequired = (insertToolCall || retracted);
   if (insertToolCall || !lengthCompensationActive || operationNeedsSafeStart || retracted || (!isFirstSection() && getPreviousSection().isMultiAxis())) {
-    var _skipBlock = !(insertToolCall || retracted);
-    gMotionModal.reset();
-    writeBlock(gPlaneModal.format(17));
-    skipBlock = _skipBlock;
-    disableLengthCompensation(false); // cancel tool length compensation prior to enabling it, required when switching G43/G43.4 modes
-
-    skipBlock = _skipBlock;
-    writeInitialPositioning(initialPosition, abc, skipBlock);
+    writeStartBlocks(safeStartIsRequired, function() {
+      disableLengthCompensation(false); // cancel tool length compensation prior to enabling it, required when switching G43/G43.4 modes
+      writeInitialPositioning(initialPosition, abc, true); // full initial positioning
+    });
     zIsOutput = !retracted;
-  } else {
-    if ((getCurrentPosition().z < initialPosition.z) && !retracted) {
-      writeBlock(gMotionModal.format(0), zOutput.format(initialPosition.z));
-      zIsOutput = true;
-    }
-    writeBlock(
-      gAbsIncModal.format(90),
-      gMotionModal.format(0),
-      xOutput.format(initialPosition.x),
-      yOutput.format(initialPosition.y)
-    );
   }
-  validate(lengthCompensationActive, "Length compensation is not active."); // make sure that lenght compensation is enabled
+  if (!safeStartIsRequired) {
+    writeInitialPositioning(initialPosition, abc, false); // simple XYZ positioning
+  }
+  validate(lengthCompensationActive, "Tool length compensation is not active."); // make sure that lenght compensation is enabled
 
   // write parametric feedrate table
   if (typeof initializeParametricFeeds == "function") {
@@ -1178,14 +1151,13 @@ function forceAny() {
 /**
   Writes the specified block.
 */
-var skipBlock = false;
 function writeBlock() {
   var text = formatWords(arguments);
   if (!text) {
     return;
   }
   if (getProperty("showSequenceNumbers") == "true") {
-    if (optionalSection || skipBlock) {
+    if (optionalSection || skipBlocks) {
       if (text) {
         writeWords("/", "N" + sequenceNumber, text);
       }
@@ -1194,13 +1166,12 @@ function writeBlock() {
     }
     sequenceNumber += getProperty("sequenceNumberIncrement");
   } else {
-    if (optionalSection || skipBlock) {
+    if (optionalSection || skipBlocks) {
       writeWords2("/", arguments);
     } else {
       writeWords(arguments);
     }
   }
-  skipBlock = false;
 }
 
 validate(settings.comments, "Setting 'comments' is required but not defined.");
@@ -1233,6 +1204,20 @@ function writeToolBlock() {
   setProperty("showSequenceNumbers", (show == "true" || show == "toolChange") ? "true" : "false");
   writeBlock(arguments);
   setProperty("showSequenceNumbers", show);
+}
+
+var skipBlocks = false;
+function writeStartBlocks(isRequired, code) {
+  var safeSkipBlocks = skipBlocks;
+  if (!isRequired) {
+    if (!getProperty("safeStartAllOperations", false)) {
+      return; // when safeStartAllOperations is disabled, dont output code and return
+    }
+    // if values are not required, but safe start is enabled - write following blocks as optional
+    skipBlocks = true;
+  }
+  code(); // writes out the code which is passed to this function as an argument
+  skipBlocks = safeSkipBlocks; // restore skipBlocks value
 }
 
 var pendingRadiusCompensation = -1;
@@ -1802,15 +1787,15 @@ var forceCoolant = false;
 function setCoolant(coolant) {
   var coolantCodes = getCoolantCodes(coolant);
   if (Array.isArray(coolantCodes)) {
-    if (settings.coolant.singleLineCoolant) {
-      skipBlock = isOptionalCoolant;
-      writeBlock(coolantCodes.join(getWordSeparator()));
-    } else {
-      for (var c in coolantCodes) {
-        skipBlock = isOptionalCoolant;
-        writeBlock(coolantCodes[c]);
+    writeStartBlocks(!isOptionalCoolant, function () {
+      if (settings.coolant.singleLineCoolant) {
+        writeBlock(coolantCodes.join(getWordSeparator()));
+      } else {
+        for (var c in coolantCodes) {
+          writeBlock(coolantCodes[c]);
+        }
       }
-    }
+    });
     return undefined;
   }
   return coolantCodes;
@@ -1958,7 +1943,7 @@ function writeRetract() {
     case Z:
       words.push("Z" + xyzFormat.format(_zHome));
       zOutput.reset();
-      retracted = !skipBlock;
+      retracted = (typeof skipBlocks == "undefined") ? true : !skipBlocks;
       break;
     default:
       error(localize("Unsupported axis specified for writeRetract()."));
@@ -1999,47 +1984,48 @@ Matrix.getOrientationFromDirection = function (ijk) {
   return W;
 };
 
-function writeInitialPositioning(position, abc, _skipBlock) {
-  skipBlock = _skipBlock;
-  if (false && currentSection.isMultiAxis() && settings.workPlaneMethod.useTiltedWorkplane) {
-    var W;
-    if (machineConfiguration.isMultiAxisConfiguration()) {
-      W = machineConfiguration.getOrientation(abc);
-    } else {
-      W = Matrix.getOrientationFromDirection(currentSection.getGlobalInitialToolAxis());
-    }
-    var angles = settings.workPlaneMethod.eulerConvention != undefined ? W.getEuler2(settings.workPlaneMethod.eulerConvention) : abc;
-    if (angles.isNonZero()) {
-      setWorkPlane(angles);
-      var prePosition = W.getTransposed().multiply(position);
-      writeBlock(gAbsIncModal.format(90), gMotionModal.format(0), xOutput.format(prePosition.x), yOutput.format(prePosition.y));
-      cancelWorkPlane();
-      writeBlock(gMotionModal.format(0), gFormat.format(getOffsetCode()), zOutput.format(position.z), hFormat.format(tool.lengthOffset));
-      lengthCompensationActive = true;
-      zIsOutput = true;
-    }
-  } else {
-    if (machineConfiguration.isHeadConfiguration()) {
-      writeBlock(gAbsIncModal.format(90), gMotionModal.format(0), gFormat.format(getOffsetCode()),
-        xOutput.format(position.x), yOutput.format(position.y), zOutput.format(position.z), hFormat.format(tool.lengthOffset)
-      );
-    } else {
-      writeBlock(gAbsIncModal.format(90), gMotionModal.format(0), xOutput.format(position.x), yOutput.format(position.y));
-      skipBlock = _skipBlock;
-      writeBlock(gMotionModal.format(0), gFormat.format(getOffsetCode()), zOutput.format(position.z), hFormat.format(tool.lengthOffset));
-    }
-    lengthCompensationActive = true;
-    zIsOutput = true;
-    gMotionModal.reset();
-    if (_skipBlock) {
-      if (getCurrentPosition().z < position.z) {
-        zOutput.reset();
-        writeBlock(gMotionModal.format(0), zOutput.format(position.z));
+function writeInitialPositioning(position, abc, fullPositioning) {
+  gMotionModal.reset();
+  if (fullPositioning) {
+    if (false && currentSection.isMultiAxis() && settings.workPlaneMethod.useTiltedWorkplane) {
+      var W;
+      if (machineConfiguration.isMultiAxisConfiguration()) {
+        W = machineConfiguration.getOrientation(abc);
+      } else {
+        W = Matrix.getOrientationFromDirection(currentSection.getGlobalInitialToolAxis());
+      }
+      var angles = settings.workPlaneMethod.eulerConvention != undefined ? W.getEuler2(settings.workPlaneMethod.eulerConvention) : abc;
+      if (angles.isNonZero()) {
+        setWorkPlane(angles);
+        var prePosition = W.getTransposed().multiply(position);
+        writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(0), xOutput.format(prePosition.x), yOutput.format(prePosition.y));
+        cancelWorkPlane();
+        writeBlock(gMotionModal.format(0), gFormat.format(getOffsetCode()), zOutput.format(position.z), hFormat.format(tool.lengthOffset));
+        lengthCompensationActive = true;
         zIsOutput = true;
       }
-      forceXYZ();
-      writeBlock(gAbsIncModal.format(90), gMotionModal.format(0), xOutput.format(position.x), yOutput.format(position.y));
+    } else {
+      if (machineConfiguration.isHeadConfiguration()) {
+        writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(0), gFormat.format(getOffsetCode()),
+          xOutput.format(position.x), yOutput.format(position.y), zOutput.format(position.z), hFormat.format(tool.lengthOffset)
+        );
+      } else {
+        writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(0), xOutput.format(position.x), yOutput.format(position.y));
+        writeBlock(gMotionModal.format(0), gFormat.format(getOffsetCode()), zOutput.format(position.z), hFormat.format(tool.lengthOffset));
+      }
+      lengthCompensationActive = true;
+      zIsOutput = true;
+      gMotionModal.reset();
     }
+  } else { // simple positioning
+    if (getCurrentPosition().z < position.z) {
+      zOutput.reset();
+      validate(lengthCompensationActive, "Tool length compensation is not active."); // make sure that lenght compensation is enabled
+      writeBlock(gMotionModal.format(0), zOutput.format(position.z));
+      zIsOutput = true;
+    }
+    forceXYZ();
+    writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(0), xOutput.format(position.x), yOutput.format(position.y));
   }
 }
 // <<<<< INCLUDED FROM include_files/initialPositioning_fanuc.cpi
