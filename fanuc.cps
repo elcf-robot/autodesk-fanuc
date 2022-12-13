@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44032 f90fd39426b4f8d2e9dbcad9b804f342d94cb3e9 $
-  $Date: 2022-11-21 23:18:17 $
+  $Revision: 44034 0b6071c675e75fc826522db067f3cf011f9fd445 $
+  $Date: 2022-12-09 14:38:02 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -392,7 +392,8 @@ var settings = {
   },
   workPlaneMethod: {
     useTiltedWorkplane    : true, // specifies that tilted workplanes should be used (ie. G68.2, G254, PLANE SPATIAL, CYCLE800), can be overwritten by property
-    eulerConvention       : EULER_ZXZ_R, // specify the desired euler convention (ie EULER_XYZ_R), set to "undefined" to use machine angles for TWP commands
+    eulerConvention       : EULER_ZXZ_R, // specifies the euler convention (ie EULER_XYZ_R), set to undefined to use machine angles for TWP commands ('undefined' requires machine configuration)
+    eulerCalculationMethod: "standard", // ('standard' / 'machine') 'machine' adjusts euler angles to match the machines ABC orientation, machine configuration required
     cancelTiltFirst       : true, // cancel tilted workplane prior to WCS (G54-G59) blocks
     useABCPrepositioning  : false, // position ABC axes prior to tilted workplane blocks
     forceMultiAxisIndexing: false, // force multi-axis indexing for 3D programs
@@ -560,9 +561,9 @@ function setWorkPlane(abc) {
         cancelWorkPlane();
       }
       if (machineConfiguration.isMultiAxisConfiguration()) {
-        var machineABC = abc.isNonZero() ? getWorkPlaneMachineABC(currentSection.workPlane, false) : abc;
+        var machineABC = abc.isNonZero() ? (currentSection.isMultiAxis() ? currentSection.getInitialToolAxisABC() : getWorkPlaneMachineABC(currentSection, false)) : abc;
         if (settings.workPlaneMethod.useABCPrepositioning || machineABC.isZero()) {
-          positionABC(machineABC, true);
+          positionABC(machineABC, false);
         }
       }
       if (abc.isNonZero()) {
@@ -681,6 +682,7 @@ function onSection() {
     writeRetract(Z); // retract
     if (isFirstSection() && machineConfiguration.isMultiAxisConfiguration()) {
       setWorkPlane(new Vector(0, 0, 0)); // reset ABC axes / working plane
+      forceABC();
     }
     forceXYZ();
     if ((insertToolCall && !isFirstSection()) || smoothing.cancel) {
@@ -747,7 +749,6 @@ function onSection() {
 
   setSmoothing(smoothing.isAllowed); // writes the required smoothing codes
 
-  forceAny();
   gMotionModal.reset();
   writeBlock(gPlaneModal.format(17));
 
@@ -1295,10 +1296,14 @@ function defineWorkPlane(_section, _setWorkPlane) {
     } else if (_section.isMultiAxis()) {
       cancelTransformation();
       abc = _section.isOptimizedForMachine() ? _section.getInitialToolAxisABC() : _section.getGlobalInitialToolAxis();
-    } else if (settings.workPlaneMethod.eulerConvention != undefined) {
-      abc = _section.workPlane.getEuler2(settings.workPlaneMethod.eulerConvention);
+    } else if (settings.workPlaneMethod.useTiltedWorkplane && settings.workPlaneMethod.eulerConvention != undefined) {
+      if (settings.workPlaneMethod.eulerCalculationMethod == "machine" && machineConfiguration.isMultiAxisConfiguration()) {
+        abc = machineConfiguration.getOrientation(getWorkPlaneMachineABC(_section, true)).getEuler2(settings.workPlaneMethod.eulerConvention);
+      } else {
+        abc = _section.workPlane.getEuler2(settings.workPlaneMethod.eulerConvention);
+      }
     } else {
-      abc = getWorkPlaneMachineABC(_section.workPlane, true);
+      abc = getWorkPlaneMachineABC(_section, true);
     }
 
     if (_setWorkPlane) {
@@ -1328,17 +1333,17 @@ function defineWorkPlane(_section, _setWorkPlane) {
 // <<<<< INCLUDED FROM include_files/defineWorkPlane.cpi
 // >>>>> INCLUDED FROM include_files/getWorkPlaneMachineABC.cpi
 validate(settings.machineAngles, "Setting 'machineAngles' is required but not defined.");
-function getWorkPlaneMachineABC(workPlane, rotate) {
+function getWorkPlaneMachineABC(_section, rotate) {
   var currentABC = isFirstSection() ? new Vector(0, 0, 0) : getCurrentDirection();
-  var abc = machineConfiguration.getABCByPreference(workPlane, currentABC, settings.machineAngles.controllingAxis, settings.machineAngles.type, settings.machineAngles.options);
-  if (!isSameDirection(machineConfiguration.getDirection(abc), workPlane.forward)) {
+  var abc = machineConfiguration.getABCByPreference(_section.workPlane, currentABC, settings.machineAngles.controllingAxis, settings.machineAngles.type, settings.machineAngles.options);
+  if (!isSameDirection(machineConfiguration.getDirection(abc), _section.workPlane.forward)) {
     error(localize("Orientation not supported."));
   }
   if (rotate) {
-    if (true /*|| revision <= 45838*/) {
+    if (true || settings.workPlaneMethod.useTiltedWorkplane /*|| revision <= 45838*/) {
       var tcp = false;
-      var R = machineConfiguration.getRemainingOrientation(abc, workPlane);
-      setRotation(tcp ? workPlane : R);
+      var R = machineConfiguration.getRemainingOrientation(abc, _section.workPlane);
+      setRotation(tcp ? _section.workPlane : R);
       setCurrentDirection(currentABC); // temporary fix for currentDirection
     } else {
       if (!currentSection.isOptimizedForMachine()) {
@@ -1483,8 +1488,10 @@ function onRapid5D(_x, _y, _z, _a, _b, _c) {
   var b = currentSection.isOptimizedForMachine() ? bOutput.format(_b) : toolVectorOutputJ.format(_b);
   var c = currentSection.isOptimizedForMachine() ? cOutput.format(_c) : toolVectorOutputK.format(_c);
 
-  writeBlock(gMotionModal.format(0), x, y, z, a, b, c);
-  forceFeed();
+  if (x || y || z || a || b || c) {
+    writeBlock(gMotionModal.format(0), x, y, z, a, b, c);
+    forceFeed();
+  }
 }
 
 function onLinear(_x, _y, _z, feed) {
@@ -3350,15 +3357,15 @@ function subprogramDefine(_initialPosition, _abc, _retracted, _zIsOutput) {
  * @param {number} subprogramType Subprogram type, can be SUB_UNKNOWN, SUB_PATTERN or SUB_CYCLE
  * @returns {boolean} If this is valid for creating a subprogram
  */
-function subprogramIsValid(section, subprogramId, subprogramType) {
-  var sectionId = section.getId();
+function subprogramIsValid(_section, subprogramId, subprogramType) {
+  var sectionId = _section.getId();
   var numberOfSections = getNumberOfSections();
   var validSubprogram = subprogramType != SUB_CYCLE;
 
   var masterPosition = new Array();
-  masterPosition[0] = getFramePosition(section.getInitialPosition());
-  masterPosition[1] = getFramePosition(section.getFinalPosition());
-  var tempBox = section.getBoundingBox();
+  masterPosition[0] = getFramePosition(_section.getInitialPosition());
+  masterPosition[1] = getFramePosition(_section.getFinalPosition());
+  var tempBox = _section.getBoundingBox();
   var masterBox = new Array();
   masterBox[0] = getFramePosition(tempBox[0]);
   masterBox[1] = getFramePosition(tempBox[1]);
