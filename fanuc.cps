@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44034 0b6071c675e75fc826522db067f3cf011f9fd445 $
-  $Date: 2022-12-09 14:38:02 $
+  $Revision: 44035 6a8d38e83854f31846e212bd2b03de413bd446f6 $
+  $Date: 2022-12-16 14:49:18 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -397,13 +397,15 @@ var settings = {
     cancelTiltFirst       : true, // cancel tilted workplane prior to WCS (G54-G59) blocks
     useABCPrepositioning  : false, // position ABC axes prior to tilted workplane blocks
     forceMultiAxisIndexing: false, // force multi-axis indexing for 3D programs
+    optimizeType          : undefined // can be set to OPTIMIZE_NONE, OPTIMIZE_BOTH, OPTIMIZE_TABLES, OPTIMIZE_HEADS, OPTIMIZE_AXIS. 'undefined' uses legacy rotations
   },
   subprograms: {
-    minimumCyclePoints: 5, // minimum number of points in cycle operation to consider for subprogram
-    format            : oFormat, // the format to use for the subprogam number format
-    startBlock        : {files:["%"], embedded:["O"]}, // specifies the start syntax of a subprogram followed by the subprogram number
-    endBlock          : {files:["%"], embedded:[mFormat.format(99)]}, // specifies the command to for the end of a subprogram
-    callBlock         : {files:[mFormat.format(98) + " P"], embedded:[mFormat.format(98) + " P"]} // specifies the command for calling a subprogram followed by the subprogram number
+    initialSubprogramNumber: undefined, // specifies the initial number to be used for subprograms. 'undefined' uses the main program number
+    minimumCyclePoints     : 5, // minimum number of points in cycle operation to consider for subprogram
+    format                 : oFormat, // the format to use for the subprogam number format
+    startBlock             : {files:["%"], embedded:["O"]}, // specifies the start syntax of a subprogram followed by the subprogram number
+    endBlock               : {files:["%"], embedded:[mFormat.format(99)]}, // specifies the command to for the end of a subprogram
+    callBlock              : {files:[mFormat.format(98) + " P"], embedded:[mFormat.format(98) + " P"]} // specifies the command for calling a subprogram followed by the subprogram number
   },
   comments: {
     permittedCommentChars: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,=_-",
@@ -415,7 +417,8 @@ var settings = {
   probing: {
     probeAngleMethod       : "OFF", // supported options are: OFF, AXIS_ROT, G68, G54.4
     allowIndexingWCSProbing: false // specifies that probe WCS with tool orientation is supported
-  }
+  },
+  maximumSequenceNumber: undefined // the maximum sequence number (Nxxx), use 'undefined' for unlimited
 };
 
 // collected state
@@ -665,8 +668,6 @@ function startSpindle(insertToolCall) {
 }
 
 function onSection() {
-  var zIsOutput = false; // true if the Z-position has been output, used for patterns
-
   var forceToolAndRetract = optionalSection && !currentSection.isOptional();
   optionalSection = currentSection.isOptional();
   var insertToolCall = isToolChangeNeeded("number") || forceToolAndRetract || currentSection.getForceToolChange();
@@ -760,7 +761,6 @@ function onSection() {
       disableLengthCompensation(false); // cancel tool length compensation prior to enabling it, required when switching G43/G43.4 modes
       writeInitialPositioning(initialPosition, abc, true); // full initial positioning
     });
-    zIsOutput = !retracted;
   }
   if (!safeStartIsRequired) {
     writeInitialPositioning(initialPosition, abc, false); // simple XYZ positioning
@@ -781,7 +781,7 @@ function onSection() {
     inspectionProcessSectionStart();
   }
 
-  subprogramDefine(initialPosition, abc, retracted, zIsOutput); // define subprogram
+  subprogramDefine(initialPosition, abc); // define subprogram
   retracted = false;
 }
 
@@ -1095,7 +1095,7 @@ function getFeed(f) {
   if (getProperty("useG95")) {
     return feedOutput.format(f / spindleSpeed); // use feed value
   }
-  if (activeMovements) {
+  if (typeof activeMovements != "undefined" && activeMovements) {
     var feedContext = activeMovements[movement];
     if (feedContext != undefined) {
       if (!feedFormat.areDifferent(feedContext.feed, f)) {
@@ -1158,6 +1158,9 @@ function writeBlock() {
     return;
   }
   if (getProperty("showSequenceNumbers") == "true") {
+    if (sequenceNumber >= settings.maximumSequenceNumber) {
+      sequenceNumber = getProperty("sequenceNumberStart");
+    }
     if (optionalSection || skipBlocks) {
       if (text) {
         writeWords("/", "N" + sequenceNumber, text);
@@ -1340,15 +1343,15 @@ function getWorkPlaneMachineABC(_section, rotate) {
     error(localize("Orientation not supported."));
   }
   if (rotate) {
-    if (true || settings.workPlaneMethod.useTiltedWorkplane /*|| revision <= 45838*/) {
+    if (settings.workPlaneMethod.optimizeType == undefined || settings.workPlaneMethod.useTiltedWorkplane) { // legacy
       var tcp = false;
       var R = machineConfiguration.getRemainingOrientation(abc, _section.workPlane);
       setRotation(tcp ? _section.workPlane : R);
       setCurrentDirection(currentABC); // temporary fix for currentDirection
     } else {
-      if (!currentSection.isOptimizedForMachine()) {
-        machineConfiguration.setToolLength(compensateToolLength ? currentSection.getTool().overallLength : 0); // define the tool length for head adjustments
-        currentSection.optimize3DPositionsByMachine(machineConfiguration, abc, OPTIMIZE_AXIS);
+      if (!_section.isOptimizedForMachine()) {
+        machineConfiguration.setToolLength(compensateToolLength ? _section.getTool().overallLength : 0); // define the tool length for head adjustments
+        _section.optimize3DPositionsByMachine(machineConfiguration, abc, settings.workPlaneMethod.optimizeType);
       }
     }
   }
@@ -2009,7 +2012,6 @@ function writeInitialPositioning(position, abc, fullPositioning) {
         cancelWorkPlane();
         writeBlock(gMotionModal.format(0), gFormat.format(getOffsetCode()), zOutput.format(position.z), hFormat.format(tool.lengthOffset));
         lengthCompensationActive = true;
-        zIsOutput = true;
       }
     } else {
       if (machineConfiguration.isHeadConfiguration()) {
@@ -2021,7 +2023,6 @@ function writeInitialPositioning(position, abc, fullPositioning) {
         writeBlock(gMotionModal.format(0), gFormat.format(getOffsetCode()), zOutput.format(position.z), hFormat.format(tool.lengthOffset));
       }
       lengthCompensationActive = true;
-      zIsOutput = true;
       gMotionModal.reset();
     }
   } else { // simple positioning
@@ -2029,7 +2030,6 @@ function writeInitialPositioning(position, abc, fullPositioning) {
       zOutput.reset();
       validate(lengthCompensationActive, "Tool length compensation is not active."); // make sure that lenght compensation is enabled
       writeBlock(gMotionModal.format(0), zOutput.format(position.z));
-      zIsOutput = true;
     }
     forceXYZ();
     writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(0), xOutput.format(position.x), yOutput.format(position.y));
@@ -2218,9 +2218,6 @@ function writeProgramNumber() {
 
     oFormat = createFormat({width:(getProperty("o8") ? 8 : 4), zeropad:true, decimals:0});
     writeln("O" + oFormat.format(programId) + conditional(programComment, " " + formatComment(programComment)));
-    if (typeof subprogramState.lastSubprogram != "undefined") {
-      subprogramState.lastSubprogram = programId;
-    }
   } else {
     error(localize("Program name has not been specified."));
     return;
@@ -3112,7 +3109,7 @@ var subprogramState = {
   subprograms            : [],          // Redirection buffer
   newSubprogram          : false,       // Indicate if the current subprogram is new to definedSubprograms
   currentSubprogram      : 0,           // The current subprogram number
-  lastSubprogram         : 0,           // The last subprogram number
+  lastSubprogram         : undefined,   // The last subprogram number
   definedSubprograms     : new Array(), // A collection of pattern and cycle subprograms
   saveShowSequenceNumbers: "",          // Used to store pre-condition of "showSequenceNumbers"
   cycleSubprogramIsActive: false,       // Indicate if it's handling a cycle subprogram
@@ -3144,6 +3141,7 @@ function subprogramStart(initialPosition, abc, incremental) {
     settings.subprograms.startBlock.embedded + settings.subprograms.format.format(subprogramState.currentSubprogram) +
     conditional(comment, formatComment(comment.substr(0, settings.comments.maximumLineLength - 2 - 6 - 1)))
   );
+  subprogramState.saveShowSequenceNumbers = getProperty("showSequenceNumbers");
   setProperty("showSequenceNumbers", "false");
   if (incremental) {
     setIncrementalMode(initialPosition, abc);
@@ -3253,9 +3251,7 @@ function getDefinedCycleSubprogram(subprogramId, initialPosition, finalPosition)
 function defineNewSubprogram(section, subprogramId, subprogramType, initialPosition, finalPosition) {
   // determine if this is valid for creating a subprogram
   isValid = subprogramIsValid(section, subprogramId, subprogramType);
-  if (isValid) {
-    subprogram = ++subprogramState.lastSubprogram;
-  }
+  var subprogram = isValid ? subprogram = ++subprogramState.lastSubprogram : undefined;
   subprogramState.definedSubprograms.push({
     type           : subprogramType,
     id             : subprogramId,
@@ -3282,15 +3278,25 @@ function isCycleOperation(section, minimumCyclePoints) {
  * Define subprogram based on the property "useSubroutines"
  * @param {Vector} _initialPosition Initial position
  * @param {Vector} _abc Machine axis angles
- * @param {boolean} _retracted If the tool has been retracted to the safe plane, used for patterns
- * @param {boolean} _zIsOutput If the Z-position has been output, used for patterns
  */
-function subprogramDefine(_initialPosition, _abc, _retracted, _zIsOutput) {
+function subprogramDefine(_initialPosition, _abc) {
   if (getProperty("useSubroutines") == "none") {
     // Return early
     return;
   }
 
+  if (subprogramState.lastSubprogram == undefined) { // initialize first subprogram number
+    if (settings.subprograms.initialSubprogramNumber == undefined) {
+      try {
+        subprogramState.lastSubprogram = getAsInt(programName);
+      } catch (e) {
+        error(localize("Program name must be a number."));
+        return;
+      }
+    } else {
+      subprogramState.lastSubprogram = settings.subprograms.initialSubprogramNumber;
+    }
+  }
   // convert patterns into subprograms
   subprogramState.patternIsActive = false;
   if (getProperty("useSubroutines") == "patterns" && isPatternOperation(currentSection)) {
@@ -3306,8 +3312,12 @@ function subprogramDefine(_initialPosition, _abc, _retracted, _zIsOutput) {
     subprogramState.currentSubprogram = subprogramDefinition.subProgram;
     if (subprogramDefinition.isValid) {
       // make sure Z-position is output prior to subprogram call
-      if (!_retracted && !_zIsOutput) {
-        writeBlock(gMotionModal.format(0), zOutput.format(_initialPosition.z));
+      var z = zOutput.format(_initialPosition.z);
+      if (!retracted && z) {
+        if (typeof lengthCompensationActive != "undefined") {
+          validate(lengthCompensationActive, "Tool length compensation is not active."); // make sure that length compensation is enabled
+        }
+        writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(0), z);
       }
 
       // call subprogram
@@ -3420,10 +3430,10 @@ function subprogramIsValid(_section, subprogramId, subprogramType) {
 
 function setAxisMode(_format, _output, _prefix, _value, _incr) {
   var i = _output.isEnabled();
-  if (_output == zOutput) {
-    _output = _incr ? createIncrementalVariable({onchange:function() {retracted = false;}, prefix:_prefix}, _format) : createVariable({onchange:function() {retracted = false;}, prefix:_prefix}, _format);
-  } else {
-    _output = _incr ? createIncrementalVariable({prefix:_prefix}, _format) : createVariable({prefix:_prefix}, _format);
+  var _onChange = _output.onChange;
+  _output = _incr ? createIncrementalVariable({prefix:_prefix}, _format) : createVariable({prefix:_prefix}, _format);
+  if (_onChange != undefined) {
+    setOnChange(_output, _onChange);
   }
   _output.format(_value);
   _output.format(_value);
