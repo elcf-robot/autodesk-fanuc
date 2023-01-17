@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44035 6a8d38e83854f31846e212bd2b03de413bd446f6 $
-  $Date: 2022-12-16 14:49:18 $
+  $Revision: 44039 701149f733a28c2314b8ff38558a7c33cfebf2bb $
+  $Date: 2023-01-13 22:31:39 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -418,7 +418,8 @@ var settings = {
     probeAngleMethod       : "OFF", // supported options are: OFF, AXIS_ROT, G68, G54.4
     allowIndexingWCSProbing: false // specifies that probe WCS with tool orientation is supported
   },
-  maximumSequenceNumber: undefined // the maximum sequence number (Nxxx), use 'undefined' for unlimited
+  maximumSequenceNumber: undefined, // the maximum sequence number (Nxxx), use 'undefined' for unlimited
+  allowToolVectorOutput: true // specifies if the control does support tool axis vector output for multi axis toolpath
 };
 
 // collected state
@@ -1183,21 +1184,23 @@ function formatComment(text) {
   var prefix = settings.comments.prefix;
   var suffix = settings.comments.suffix;
   text = settings.comments.upperCase ? text.toUpperCase() : text;
-  return prefix + filterText(String(text), settings.comments.permittedCommentChars).replace(/[()]/g, "") + suffix;
+  text = filterText(String(text), settings.comments.permittedCommentChars).replace(/[()]/g, "");
+  text = String(text).substring(0, settings.comments.maximumLineLength - prefix.length - suffix.length);
+  return text != "" ?  prefix + text + suffix : "";
 }
 
 /**
   Output a comment.
 */
 function writeComment(text) {
-  writeln(formatComment(text.substr(0, settings.comments.maximumLineLength - 2)));
+  var comments = String(text).split("\n");
+  for (comment in comments) {
+    writeln(formatComment(comments[comment]));
+  }
 }
 
-function onComment(message) {
-  var comments = String(message).split("\n");
-  for (comment in comments) {
-    writeComment(comments[comment]);
-  }
+function onComment(text) {
+  writeComment(text);
 }
 
 /**
@@ -1227,6 +1230,11 @@ function writeStartBlocks(isRequired, code) {
 var pendingRadiusCompensation = -1;
 function onRadiusCompensation() {
   pendingRadiusCompensation = radiusCompensation;
+  var allowRadiusCompensation = typeof settings.allowRadiusCompensation != "undefined" ? settings.allowRadiusCompensation : true;
+  if (pendingRadiusCompensation >= 0 && !allowRadiusCompensation) {
+    error(localize("Radius compensation mode is not supported."));
+    return;
+  }
 }
 
 /** Helper function to be able to use a default value for settings which do not exist. */
@@ -1298,6 +1306,10 @@ function defineWorkPlane(_section, _setWorkPlane) {
       abc = getCurrentDirection();
     } else if (_section.isMultiAxis()) {
       cancelTransformation();
+      var allowToolVectorOutput = typeof settings.allowToolVectorOutput != "undefined" ? settings.allowToolVectorOutput : false;
+      if (!machineConfiguration.isMultiAxisConfiguration() && !allowToolVectorOutput) {
+        error(localize("This post configuration requires a machine configuration for 5-axis simultaneous toolpath."));
+      }
       abc = _section.isOptimizedForMachine() ? _section.getInitialToolAxisABC() : _section.getGlobalInitialToolAxis();
     } else if (settings.workPlaneMethod.useTiltedWorkplane && settings.workPlaneMethod.eulerConvention != undefined) {
       if (settings.workPlaneMethod.eulerCalculationMethod == "machine" && machineConfiguration.isMultiAxisConfiguration()) {
@@ -1923,7 +1935,7 @@ function writeRetract() {
     method = settings.retract.methodZ;
   }
 
-  if (gRotationModal.getCurrent() == 68 && settings.retract.cancelRotationOnRetracting) { // cancel rotation before retracting
+  if (typeof gRotationModal != "undefined" && gRotationModal.getCurrent() == 68 && settings.retract.cancelRotationOnRetracting) { // cancel rotation before retracting
     cancelWorkPlane(true);
   }
 
