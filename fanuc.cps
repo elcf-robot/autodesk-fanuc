@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44039 701149f733a28c2314b8ff38558a7c33cfebf2bb $
-  $Date: 2023-01-13 22:31:39 $
+  $Revision: 44040 90378e1d3877077196cc2b3cee84a16766d843a0 $
+  $Date: 2023-01-20 11:09:27 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -210,7 +210,9 @@ properties = {
     values     : [
       {title:"No", id:"none"},
       {title:"All Operations", id:"allOperations"},
+      {title:"All Operations & Patterns", id:"allPatterns"},
       {title:"Cycles", id:"cycles"},
+      {title:"Operations, Patterns, Cycles", id:"all"},
       {title:"Patterns", id:"patterns"}
     ],
     value: "none",
@@ -3111,6 +3113,19 @@ function setProbeAngleMethod() {
 // <<<<< INCLUDED FROM include_files/setProbeAngleMethod.cpi
 
 // >>>>> INCLUDED FROM include_files/subprograms.cpi
+var NONE = 0x0000;
+var PATTERNS = 0x0001;
+var CYCLES = 0x0010;
+var ALLOPERATIONS = 0x0100;
+var subroutineBitmasks = {
+  none         : NONE,
+  patterns     : PATTERNS,
+  cycles       : CYCLES,
+  allOperations: ALLOPERATIONS,
+  allPatterns  : PATTERNS + ALLOPERATIONS,
+  all          : PATTERNS + CYCLES + ALLOPERATIONS
+};
+
 var SUB_UNKNOWN = 0;
 var SUB_PATTERN = 1;
 var SUB_CYCLE = 2;
@@ -3286,13 +3301,18 @@ function isCycleOperation(section, minimumCyclePoints) {
   (section.getNumberOfCycles() == 1) && (section.getNumberOfCyclePoints() >= minimumCyclePoints);
 }
 
+/** Returns true if the subroutine bit flag is enabled **/
+function isSubProgramEnabledFor(subroutine) {
+  return subroutineBitmasks[getProperty("useSubroutines")] & subroutine;
+}
+
 /**
  * Define subprogram based on the property "useSubroutines"
  * @param {Vector} _initialPosition Initial position
  * @param {Vector} _abc Machine axis angles
  */
 function subprogramDefine(_initialPosition, _abc) {
-  if (getProperty("useSubroutines") == "none") {
+  if (isSubProgramEnabledFor(NONE)) {
     // Return early
     return;
   }
@@ -3311,7 +3331,7 @@ function subprogramDefine(_initialPosition, _abc) {
   }
   // convert patterns into subprograms
   subprogramState.patternIsActive = false;
-  if (getProperty("useSubroutines") == "patterns" && isPatternOperation(currentSection)) {
+  if (isSubProgramEnabledFor(PATTERNS) && isPatternOperation(currentSection)) {
     var subprogramId = currentSection.getPatternId();
     var subprogramType = SUB_PATTERN;
     var subprogramDefinition = getDefinedPatternSubprogram(subprogramId);
@@ -3348,7 +3368,7 @@ function subprogramDefine(_initialPosition, _abc) {
   // Patterns are not used, check other cases
   if (!subprogramState.patternIsActive) {
     // Output cycle operation as subprogram
-    if (getProperty("useSubroutines") == "cycles" && isCycleOperation(currentSection, settings.subprograms.minimumCyclePoints)) {
+    if (isSubProgramEnabledFor(CYCLES) && isCycleOperation(currentSection, settings.subprograms.minimumCyclePoints)) {
       var finalPosition = getFramePosition(currentSection.getFinalPosition());
       var subprogramId = currentSection.getNumberOfCyclePoints();
       var subprogramType = SUB_CYCLE;
@@ -3362,7 +3382,7 @@ function subprogramDefine(_initialPosition, _abc) {
     }
 
     // Neither patterns and cycles are used, check other operations
-    if (!subprogramState.cycleSubprogramIsActive && getProperty("useSubroutines") == "allOperations") {
+    if (!subprogramState.cycleSubprogramIsActive && isSubProgramEnabledFor(ALLOPERATIONS)) {
       // Output all operations as subprograms
       subprogramState.currentSubprogram = ++subprogramState.lastSubprogram;
       subprogramCall();
