@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44066 595dc754de98319ddce25b7bc7c15246072fce54 $
-  $Date: 2023-05-15 12:25:05 $
+  $Revision: 44078 7098e6d148aa6ea195b42597d82fe2f00d0115bb $
+  $Date: 2023-07-17 12:38:58 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -2692,19 +2692,18 @@ function writeInitialPositioning(position, isRequired, codes1, codes2) {
     }
 
     // multi axis prepositioning with TWP
-    if (currentSection.isMultiAxis() && getSetting("workPlaneMethod.prepositionWithTWP", true) && getSetting("workPlaneMethod.useTiltedWorkplane", false) && tcp.isSupportedByOperation) {
+    if (currentSection.isMultiAxis() && getSetting("workPlaneMethod.prepositionWithTWP", true) && getSetting("workPlaneMethod.useTiltedWorkplane", false) &&
+      tcp.isSupportedByOperation && getCurrentDirection().isNonZero()) {
       var W = machineConfiguration.isMultiAxisConfiguration() ? machineConfiguration.getOrientation(getCurrentDirection()) :
         Matrix.getOrientationFromDirection(getCurrentDirection());
       var prePosition = W.getTransposed().multiply(position);
       var angles = W.getEuler2(settings.workPlaneMethod.eulerConvention);
-      if (angles.isNonZero()) {
-        setWorkPlane(angles);
-        writeBlock(modalCodes, gMotionModal.format(motionCode), xOutput.format(prePosition.x), yOutput.format(prePosition.y), feed, additionalCodes[0]);
-        cancelWorkPlane();
-        writeBlock(gOffset, hOffset, additionalCodes[1]); // omit Z-axis output is desired
-        lengthCompensationActive = true;
-        forceAny(); // required to output XYZ coordinates in the following line
-      }
+      setWorkPlane(angles);
+      writeBlock(modalCodes, gMotionModal.format(motionCode), xOutput.format(prePosition.x), yOutput.format(prePosition.y), feed, additionalCodes[0]);
+      cancelWorkPlane();
+      writeBlock(gOffset, hOffset, additionalCodes[1]); // omit Z-axis output is desired
+      lengthCompensationActive = true;
+      forceAny(); // required to output XYZ coordinates in the following line
     } else {
       if (machineConfiguration.isHeadConfiguration()) {
         writeBlock(modalCodes, gMotionModal.format(motionCode), gOffset,
