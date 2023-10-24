@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44083 865c6f1c385b9194ab63e73899f0a4787fce12a6 $
-  $Date: 2023-08-14 12:16:17 $
+  $Revision: 44094 03c23574a74acc10fd9cb883490357591b3314dd $
+  $Date: 2023-10-24 04:54:26 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -358,8 +358,10 @@ var settings = {
     initialSubprogramNumber: undefined, // specifies the initial number to be used for subprograms. 'undefined' uses the main program number
     minimumCyclePoints     : 5, // minimum number of points in cycle operation to consider for subprogram
     format                 : oFormat, // the format to use for the subprogam number format
-    startBlock             : {files:["%"], embedded:["O"]}, // specifies the start syntax of a subprogram followed by the subprogram number
-    endBlock               : {files:["%"], embedded:[mFormat.format(99)]}, // specifies the command to for the end of a subprogram
+    // objects below also accept strings with "%currentSubprogram" as placeholder. Sample: {files:["%"], embedded:"N" + "%currentSubprogram"}
+    files                  : {extension:extension, prefix:undefined}, // specifies the subprogram file extension and the prefix to use for the generated file
+    startBlock             : {files:["%" + EOL + "O"], embedded:["O"]}, // specifies the start syntax of a subprogram followed by the subprogram number
+    endBlock               : {files:[mFormat.format(99) + EOL + "%"], embedded:[mFormat.format(99)]}, // specifies the command to for the end of a subprogram
     callBlock              : {files:[mFormat.format(98) + " P"], embedded:[mFormat.format(98) + " P"]} // specifies the command for calling a subprogram followed by the subprogram number
   },
   comments: {
@@ -2041,8 +2043,17 @@ var subprogramState = {
   cycleSubprogramIsActive: false,       // Indicate if it's handling a cycle subprogram
   patternIsActive        : false,       // Indicate if it's handling a pattern subprogram
   incrementalSubprogram  : false,       // Indicate if the current subprogram needs to go incremental mode
-  incrementalMode        : false        // Indicate if incremental mode is on
+  incrementalMode        : false,       // Indicate if incremental mode is on
+  mainProgramNumber      : undefined    // The main program number
 };
+
+function subprogramResolveSetting(_setting, _val, _comment) {
+  if (typeof _setting == "string") {
+    return formatWords(_setting.toString().replace("%currentSubprogram", subprogramState.currentSubprogram), (_comment ? formatComment(_comment) : ""));
+  } else {
+    return formatWords(_setting + (_val ? settings.subprograms.format.format(_val) : ""), (_comment ? formatComment(_comment) : ""));
+  }
+}
 
 /**
  * Start to redirect buffer to subprogram.
@@ -2051,39 +2062,49 @@ var subprogramState = {
  * @param {boolean} incremental If the subprogram needs to go incremental mode
  */
 function subprogramStart(initialPosition, abc, incremental) {
+  var comment = getParameter("operation-comment", "");
+  var startBlock;
   if (getProperty("useFilesForSubprograms")) {
-    var path = FileSystem.getCombinedPath(FileSystem.getFolderPath(getOutputPath()), subprogramState.currentSubprogram + "." + extension);
+    var _fileName = subprogramState.currentSubprogram;
+    var subprogramExtension = extension;
+    if (settings.subprograms.files) {
+      if (settings.subprograms.files.prefix != undefined) {
+        _fileName = subprogramResolveSetting(settings.subprograms.files.prefix, subprogramState.currentSubprogram);
+      }
+      if (settings.subprograms.files.extension) {
+        subprogramExtension = settings.subprograms.files.extension;
+      }
+    }
+    var path = FileSystem.getCombinedPath(FileSystem.getFolderPath(getOutputPath()), _fileName + "." + subprogramExtension);
     redirectToFile(path);
-    writeln(settings.subprograms.startBlock.files);
+    startBlock = subprogramResolveSetting(settings.subprograms.startBlock.files, subprogramState.currentSubprogram, comment);
   } else {
     redirectToBuffer();
+    startBlock = subprogramResolveSetting(settings.subprograms.startBlock.embedded, subprogramState.currentSubprogram, comment);
   }
-  var comment = "";
-  if (hasParameter("operation-comment")) {
-    comment = getParameter("operation-comment");
-  }
+  writeln(startBlock);
 
-  writeln(
-    settings.subprograms.startBlock.embedded + settings.subprograms.format.format(subprogramState.currentSubprogram) +
-    conditional(comment, SP + formatComment(comment.substring(0, settings.comments.maximumLineLength - 2 - 6 - 1)))
-  );
-  subprogramState.saveShowSequenceNumbers = getProperty("showSequenceNumbers");
-  setProperty("showSequenceNumbers", "false");
+  subprogramState.saveShowSequenceNumbers = getProperty("showSequenceNumbers", undefined);
+  if (subprogramState.saveShowSequenceNumbers != undefined) {
+    setProperty("showSequenceNumbers", "false");
+  }
   if (incremental) {
     setAbsIncMode(true, initialPosition, abc);
   }
-  gPlaneModal.reset();
-  gMotionModal.reset();
+  if (typeof gPlaneModal != "undefined" && typeof gMotionModal != "undefined") {
+    forceModals(gPlaneModal, gMotionModal);
+  }
 }
 
 /** Output the command for calling a subprogram by its subprogram number. */
-
 function subprogramCall() {
+  var callBlock;
   if (getProperty("useFilesForSubprograms")) {
-    writeBlock(settings.subprograms.callBlock.files + settings.subprograms.format.format(subprogramState.currentSubprogram));
+    callBlock = subprogramResolveSetting(settings.subprograms.callBlock.files, subprogramState.currentSubprogram);
   } else {
-    writeBlock(settings.subprograms.callBlock.embedded + settings.subprograms.format.format(subprogramState.currentSubprogram));
+    callBlock = subprogramResolveSetting(settings.subprograms.callBlock.embedded, subprogramState.currentSubprogram);
   }
+  writeBlock(callBlock); // call subprogram
 }
 
 /** End of subprogram and close redirection. */
@@ -2099,10 +2120,12 @@ function subprogramEnd() {
       }
       setAbsIncMode(false, finalPosition, abc);
 
-      writeBlock(settings.subprograms.endBlock.embedded);
       if (getProperty("useFilesForSubprograms")) {
-        writeln(settings.subprograms.startBlock.files);
+        var endBlockFiles = subprogramResolveSetting(settings.subprograms.endBlock.files);
+        writeln(endBlockFiles);
       } else {
+        var endBlockEmbedded = subprogramResolveSetting(settings.subprograms.endBlock.embedded);
+        writeln(endBlockEmbedded);
         writeln("");
         subprogramState.subprograms += getRedirectionBuffer();
       }
@@ -2110,7 +2133,9 @@ function subprogramEnd() {
     forceAny();
     subprogramState.newSubprogram = false;
     subprogramState.cycleSubprogramIsActive = false;
-    setProperty("showSequenceNumbers", subprogramState.saveShowSequenceNumbers);
+    if (subprogramState.saveShowSequenceNumbers != undefined) {
+      setProperty("showSequenceNumbers", subprogramState.saveShowSequenceNumbers);
+    }
     closeRedirection();
   }
 }
@@ -2220,14 +2245,18 @@ function subprogramDefine(_initialPosition, _abc) {
     if (settings.subprograms.initialSubprogramNumber == undefined) {
       try {
         subprogramState.lastSubprogram = getAsInt(programName);
+        subprogramState.mainProgramNumber = subprogramState.lastSubprogram; // mainProgramNumber must be a number
       } catch (e) {
-        error(localize("Program name must be a number."));
+        error(localize("Program name must be a number when using subprograms."));
         return;
       }
     } else {
-      subprogramState.lastSubprogram = settings.subprograms.initialSubprogramNumber;
+      subprogramState.lastSubprogram = settings.subprograms.initialSubprogramNumber - 1;
+      // if programName is a string set mainProgramNumber to undefined, if programName is a number set mainProgramNumber to programName
+      subprogramState.mainProgramNumber = (!isNaN(programName) && !isNaN(parseInt(programName, 10))) ? getAsInt(programName) : undefined;
     }
   }
+
   // convert patterns into subprograms
   subprogramState.patternIsActive = false;
   if (isSubProgramEnabledFor(PATTERNS) && isPatternOperation(currentSection)) {
@@ -2248,7 +2277,16 @@ function subprogramDefine(_initialPosition, _abc) {
         if (typeof lengthCompensationActive != "undefined") {
           validate(lengthCompensationActive, "Tool length compensation is not active."); // make sure that length compensation is enabled
         }
-        writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(0), z);
+        var block = "";
+        if (typeof gAbsIncModal != "undefined") {
+          block += gAbsIncModal.format(90);
+        }
+        if (typeof gPlaneModal != "undefined") {
+          block += gPlaneModal.format(17);
+        }
+        writeBlock(block);
+        zOutput.reset();
+        invokeOnRapid(xOutput.getCurrent(), yOutput.getCurrent(), _initialPosition.z);
       }
 
       // call subprogram
@@ -2284,6 +2322,9 @@ function subprogramDefine(_initialPosition, _abc) {
     if (!subprogramState.cycleSubprogramIsActive && isSubProgramEnabledFor(ALLOPERATIONS)) {
       // Output all operations as subprograms
       subprogramState.currentSubprogram = ++subprogramState.lastSubprogram;
+      if (subprogramState.mainProgramNumber != undefined && (subprogramState.currentSubprogram == subprogramState.mainProgramNumber)) {
+        subprogramState.currentSubprogram = ++subprogramState.lastSubprogram; // avoid using main program number for current subprogram
+      }
       subprogramCall();
       subprogramState.newSubprogram = true;
       subprogramStart(_initialPosition, _abc, false);
@@ -2365,11 +2406,13 @@ function subprogramIsValid(_section, subprogramId, subprogramType) {
  * @param {Vector} xyz Linear axis values for formating
  * @param {Vector} abc Rotary axis values for formating
 */
-
 function setAbsIncMode(incremental, xyz, abc) {
   var outputFormats = [xOutput, yOutput, zOutput, aOutput, bOutput, cOutput];
   for (var i = 0; i < outputFormats.length; ++i) {
     outputFormats[i].setType(incremental ? TYPE_INCREMENTAL : TYPE_ABSOLUTE);
+    if (typeof incPrefix != "undefined" && typeof absPrefix != "undefined") {
+      outputFormats[i].setPrefix(incremental ? incPrefix[i] : absPrefix[i]);
+    }
     if (i <= 2) { // xyz
       outputFormats[i].setCurrent(xyz.getCoordinate(i));
     } else { // abc
@@ -2377,10 +2420,12 @@ function setAbsIncMode(incremental, xyz, abc) {
     }
   }
   subprogramState.incrementalMode = incremental;
-  if (incremental) {
-    gAbsIncModal.reset();
+  if (typeof gAbsIncModal != "undefined") {
+    if (incremental) {
+      forceModals(gAbsIncModal);
+    }
+    writeBlock(gAbsIncModal.format(incremental ? 91 : 90));
   }
-  writeBlock(gAbsIncModal.format(incremental ? 91 : 90));
 }
 
 function setCyclePosition(_position) {
