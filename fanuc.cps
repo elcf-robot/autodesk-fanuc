@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44094 03c23574a74acc10fd9cb883490357591b3314dd $
-  $Date: 2023-10-24 04:54:26 $
+  $Revision: 44104 165ed1a9c77e5601dab85a96f32381c0b4a83b25 $
+  $Date: 2023-12-14 12:10:48 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -254,9 +254,9 @@ var oFormat = createFormat({width:4, zeropad:true, decimals:0});
 var peckFormat = createFormat({decimals:(unit == MM ? 3 : 4), forceDecimal:true});
 // var peckFormat = createFormat({decimals:0, forceDecimal:false, trim:false, width:4, zeropad:true, scale:(unit == MM ? 1000 : 10000)});
 
-var xOutput = createOutputVariable({prefix:"X"}, xyzFormat);
-var yOutput = createOutputVariable({prefix:"Y"}, xyzFormat);
-var zOutput = createOutputVariable({onchange:function() {retracted = false;}, prefix:"Z"}, xyzFormat);
+var xOutput = createOutputVariable({onchange:function() {state.retractedX = false;}, prefix:"X"}, xyzFormat);
+var yOutput = createOutputVariable({onchange:function() {state.retractedY = false;}, prefix:"Y"}, xyzFormat);
+var zOutput = createOutputVariable({onchange:function() {state.retractedZ = false;}, prefix:"Z"}, xyzFormat);
 var toolVectorOutputI = createOutputVariable({prefix:"I", control:CONTROL_FORCE}, ijkFormat);
 var toolVectorOutputJ = createOutputVariable({prefix:"J", control:CONTROL_FORCE}, ijkFormat);
 var toolVectorOutputK = createOutputVariable({prefix:"K", control:CONTROL_FORCE}, ijkFormat);
@@ -325,7 +325,8 @@ var settings = {
     cancelRotationOnRetracting: false, // specifies that rotations (G68) need to be canceled prior to retracting
     methodXY                  : undefined, // special condition, overwrite retract behavior per axis
     methodZ                   : undefined, // special condition, overwrite retract behavior per axis
-    useZeroValues             : ["G28", "G30"] // enter property value id(s) for using "0" value instead of machineConfiguration axes home position values (ie G30 Z0)
+    useZeroValues             : ["G28", "G30"], // enter property value id(s) for using "0" value instead of machineConfiguration axes home position values (ie G30 Z0)
+    homeXY                    : {onIndexing:false, onToolChange:false, onProgramEnd:{axes:[X, Y]}} // Specifies when the machine should be homed in X/Y. Sample: onIndexing:{axes:[X, Y], singleLine:false}
   },
   parametricFeeds: {
     firstFeedParameter    : 500, // specifies the initial parameter number to be used for parametric feedrate output
@@ -426,13 +427,12 @@ function onOpen() {
   validateCommonParameters();
 }
 
-var lengthCompensationActive = false;
 /** Disables length compensation if currently active or if forced. */
 function disableLengthCompensation(force) {
-  if (lengthCompensationActive || force) {
-    validate(retracted || skipBlocks, "Cannot cancel length compensation if the machine is not fully retracted.");
+  if (state.lengthCompensationActive || force) {
+    validate(state.retractedZ, "Cannot cancel length compensation if the machine is not fully retracted.");
     writeBlock(gFormat.format(49));
-    lengthCompensationActive = false;
+    state.lengthCompensationActive = false;
   }
 }
 
@@ -441,8 +441,8 @@ function setSmoothing(mode) {
   if (mode == smoothing.isActive && (!mode || !smoothing.isDifferent) && !smoothing.force) {
     return; // return if smoothing is already active or is not different
   }
-  if (typeof lengthCompensationActive != "undefined" && smoothingSettings.cancelCompensation) {
-    validate(!lengthCompensationActive, "Length compensation is active while trying to update smoothing.");
+  if (validateLengthCompensation && smoothingSettings.cancelCompensation) {
+    validate(!state.lengthCompensationActive, "Length compensation is active while trying to update smoothing.");
   }
 
   var useNanoSmoothing = false; // set to true use nano smoothing G5.1 Q3
@@ -534,7 +534,7 @@ function onSection() {
 
   // prepositioning
   var initialPosition = getFramePosition(currentSection.getInitialPosition());
-  var isRequired = insertToolCall || retracted || !lengthCompensationActive  || (!isFirstSection() && getPreviousSection().isMultiAxis());
+  var isRequired = insertToolCall || state.retractedZ || !state.lengthCompensationActive  || (!isFirstSection() && getPreviousSection().isMultiAxis());
   writeInitialPositioning(initialPosition, isRequired);
 
   // write parametric feedrate table
@@ -554,12 +554,12 @@ function onSection() {
   if (subprogramsAreSupported()) {
     subprogramDefine(initialPosition, abc); // define subprogram
   }
-  retracted = false;
 }
 
 function onDwell(seconds) {
-  if (seconds > 99999.999) {
-    warning(localize("Dwelling time is out of range."));
+  var maxValue = 99999.999;
+  if (seconds > maxValue) {
+    warning(subst(localize("Dwelling time of '%1' exceeds the maximum value of '%2' in operation '%3'"), seconds, maxValue, getParameter("operation-comment", "")));
   }
   milliseconds = clamp(1, seconds * 1000, 99999999);
   writeBlock(gFeedModeModal.format(94), gFormat.format(4), "P" + milliFormat.format(milliseconds));
@@ -734,9 +734,9 @@ function onRotateAxes(_x, _y, _z, _a, _b, _c) {
 /** Return from safe position after indexing rotaries. */
 function onReturnFromSafeRetractPosition(_x, _y, _z) {
   // reinstate TCP / tool length compensation
-  if (!lengthCompensationActive) {
+  if (!state.lengthCompensationActive) {
     writeBlock(gFormat.format(getOffsetCode()), hFormat.format(tool.lengthOffset));
-    lengthCompensationActive = true;
+    state.lengthCompensationActive = true;
   }
 
   // position in XY
@@ -778,7 +778,9 @@ function onClose() {
   if (settings.probing.probeAngleMethod == "G54.4") {
     writeBlock(gFormat.format(54.4), "P0");
   }
-  writeRetract(X, Y); // return to home
+  if (getSetting("retract.homeXY.onProgramEnd", false)) {
+    writeRetract(settings.retract.homeXY.onProgramEnd);
+  }
   writeBlock(mFormat.format(30)); // program end
 
   if (subprogramsAreSupported()) {
@@ -791,12 +793,19 @@ function onClose() {
 // internal variables, do not change
 var receivedMachineConfiguration;
 var tcp = {isSupportedByControl:getSetting("supportsTCP", true), isSupportedByMachine:false, isSupportedByOperation:false};
+var state = {
+  retractedX              : false, // specifies that the machine has been retracted in X
+  retractedY              : false, // specifies that the machine has been retracted in Y
+  retractedZ              : false, // specifies that the machine has been retracted in Z
+  lengthCompensationActive: false, // specifies that tool length compensation is active
+  mainState               : true // specifies the current context of the state (true = main, false = optional)
+};
+var validateLengthCompensation = getSetting("outputToolLengthCompensation", true); // disable validation when outputToolLengthCompensation is disabled
 var multiAxisFeedrate;
 var sequenceNumber;
 var optionalSection = false;
 var currentWorkOffset;
 var forceSpindleSpeed = false;
-var retracted = false; // specifies that the tool has been retracted to the safe plane
 var operationNeedsSafeStart = false; // used to convert blocks to optional for safeStartAllOperations
 
 function activateMachine() {
@@ -1022,6 +1031,8 @@ function writeBlock() {
   if (!text) {
     return;
   }
+  var prefix = getSetting("sequenceNumberPrefix", "N");
+  var suffix = getSetting("writeBlockSuffix", "");
   if ((optionalSection || skipBlocks) && !getSetting("supportsOptionalBlocks", true)) {
     error(localize("Optional blocks are not supported by this post."));
   }
@@ -1030,18 +1041,16 @@ function writeBlock() {
       sequenceNumber = getProperty("sequenceNumberStart");
     }
     if (optionalSection || skipBlocks) {
-      if (text) {
-        writeWords("/", "N" + sequenceNumber, text);
-      }
+      writeWords2("/", prefix + sequenceNumber, text + suffix);
     } else {
-      writeWords2("N" + sequenceNumber, arguments);
+      writeWords2(prefix + sequenceNumber, text + suffix);
     }
     sequenceNumber += getProperty("sequenceNumberIncrement");
   } else {
     if (optionalSection || skipBlocks) {
-      writeWords2("/", arguments);
+      writeWords2("/", text + suffix);
     } else {
-      writeWords(arguments);
+      writeWords(text + suffix);
     }
   }
 }
@@ -1084,7 +1093,11 @@ function writeComment(text) {
   for (comment in comments) {
     var _comment = formatComment(comments[comment]);
     if (_comment) {
-      writeln(_comment);
+      if (getSetting("comments.showSequenceNumbers", false)) {
+        writeBlock(_comment);
+      } else {
+        writeln(_comment);
+      }
     }
   }
 }
@@ -1104,17 +1117,30 @@ function writeToolBlock() {
 }
 
 var skipBlocks = false;
+var initialState = JSON.parse(JSON.stringify(state)); // save initial state
+var optionalState = JSON.parse(JSON.stringify(state));
+var saveCurrentSectionId = undefined;
 function writeStartBlocks(isRequired, code) {
-  var safeSkipBlocks = skipBlocks;
+  var saveSkipBlocks = skipBlocks;
+  var saveMainState = state; // save main state
+
   if (!isRequired) {
     if (!getProperty("safeStartAllOperations", false)) {
       return; // when safeStartAllOperations is disabled, dont output code and return
     }
-    // if values are not required, but safe start is enabled - write following blocks as optional
-    skipBlocks = true;
+    if (saveCurrentSectionId != getCurrentSectionId()) {
+      saveCurrentSectionId = getCurrentSectionId();
+      forceModals(); // force all modal variables when entering a new section
+      optionalState = Object.create(initialState); // reset optionalState to initialState when entering a new section
+    }
+    skipBlocks = true; // if values are not required, but safeStartAllOperations is enabled - write following blocks as optional
+    state = optionalState; // set state to optionalState if skipBlocks is true
+    state.mainState = false;
   }
   code(); // writes out the code which is passed to this function as an argument
-  skipBlocks = safeSkipBlocks; // restore skipBlocks value
+
+  state = saveMainState; // restore main state
+  skipBlocks = saveSkipBlocks; // restore skipBlocks value
 }
 
 var pendingRadiusCompensation = -1;
@@ -1201,6 +1227,8 @@ function getForwardDirection(_section) {
 }
 
 function getRetractParameters() {
+  var _arguments = typeof arguments[0] === "object" ? arguments[0].axes : arguments;
+  var singleLine = arguments[0].singleLine == undefined ? true : arguments[0].singleLine;
   var words = []; // store all retracted axes in an array
   var retractAxes = new Array(false, false, false);
   var method = getProperty("safePositionMethod", "undefined");
@@ -1211,12 +1239,11 @@ function getRetractParameters() {
     return undefined;
   }
   validate(settings.retract, "Setting 'retract' is required but not defined.");
-  validate(arguments.length != 0, "No axis specified for getRetractParameters().");
-
-  for (i in arguments) {
-    retractAxes[arguments[i]] = true;
+  validate(_arguments.length != 0, "No axis specified for getRetractParameters().");
+  for (i in _arguments) {
+    retractAxes[_arguments[i]] = true;
   }
-  if ((retractAxes[0] || retractAxes[1]) && !retracted) { // retract Z first before moving to X/Y home
+  if ((retractAxes[0] || retractAxes[1]) && !state.retractedZ) { // retract Z first before moving to X/Y home
     error(localize("Retracting in X/Y is not possible without being retracted in Z."));
     return undefined;
   }
@@ -1232,27 +1259,35 @@ function getRetractParameters() {
   var _xHome = machineConfiguration.hasHomePositionX() && !useZeroValues ? machineConfiguration.getHomePositionX() : toPreciseUnit(0, MM);
   var _yHome = machineConfiguration.hasHomePositionY() && !useZeroValues ? machineConfiguration.getHomePositionY() : toPreciseUnit(0, MM);
   var _zHome = machineConfiguration.getRetractPlane() != 0 && !useZeroValues ? machineConfiguration.getRetractPlane() : toPreciseUnit(0, MM);
-  for (var i = 0; i < arguments.length; ++i) {
-    switch (arguments[i]) {
+  for (var i = 0; i < _arguments.length; ++i) {
+    switch (_arguments[i]) {
     case X:
-      words.push("X" + xyzFormat.format(_xHome));
-      xOutput.reset();
+      if (!state.retractedX) {
+        words.push("X" + xyzFormat.format(_xHome));
+        xOutput.reset();
+        state.retractedX = true;
+      }
       break;
     case Y:
-      words.push("Y" + xyzFormat.format(_yHome));
-      yOutput.reset();
+      if (!state.retractedY) {
+        words.push("Y" + xyzFormat.format(_yHome));
+        yOutput.reset();
+        state.retractedY = true;
+      }
       break;
     case Z:
-      words.push("Z" + xyzFormat.format(_zHome));
-      zOutput.reset();
-      retracted = (typeof skipBlocks == "undefined") ? true : !skipBlocks;
+      if (!state.retractedZ) {
+        words.push("Z" + xyzFormat.format(_zHome));
+        zOutput.reset();
+        state.retractedZ = true;
+      }
       break;
     default:
       error(localize("Unsupported axis specified for getRetractParameters()."));
       return undefined;
     }
   }
-  return {method:method, retractAxes:retractAxes, words:words};
+  return {method:method, retractAxes:retractAxes, words:words, singleLine:singleLine};
 }
 
 /** Returns true when subprogram logic does exist into the post. */
@@ -1403,12 +1438,9 @@ function positionABC(abc, force) {
   var b = machineConfiguration.isMultiAxisConfiguration() ? bOutput.format(abc.y) : toolVectorOutputJ.format(abc.y);
   var c = machineConfiguration.isMultiAxisConfiguration() ? cOutput.format(abc.z) : toolVectorOutputK.format(abc.z);
   if (a || b || c) {
-    if (!retracted) {
-      if (typeof moveToSafeRetractPosition == "function") {
-        moveToSafeRetractPosition();
-      } else {
-        writeRetract(Z);
-      }
+    writeRetract(Z);
+    if (getSetting("retract.homeXY.onIndexing", false)) {
+      writeRetract(settings.retract.homeXY.onIndexing);
     }
     onCommand(COMMAND_UNLOCK_MULTI_AXIS);
     gMotionModal.reset();
@@ -1463,12 +1495,9 @@ function unwindABC(abc) {
       var revolutions = distanceABC / 360;
       var angle = settings.unwind.method == 2 ? nearestABC.getCoordinate(j) : 0;
       if (distanceABC > distanceOrigin && (settings.unwind.method == 2 || (revolutions > 1))) { // G28 method will move rotary, so make sure move is greater than 360 degrees
-        if (!retracted) {
-          if (typeof moveToSafeRetractPosition == "function") {
-            moveToSafeRetractPosition();
-          } else {
-            writeRetract(Z);
-          }
+        writeRetract(Z);
+        if (getSetting("retract.homeXY.onIndexing", false)) {
+          writeRetract(settings.retract.homeXY.onIndexing);
         }
         onCommand(COMMAND_UNLOCK_MULTI_AXIS);
         var outputs = [aOutput, bOutput, cOutput];
@@ -1511,12 +1540,15 @@ function writeWCS(section, wcsIsRequired) {
 // <<<<< INCLUDED FROM include_files/writeWCS.cpi
 // >>>>> INCLUDED FROM include_files/writeToolCall.cpi
 function writeToolCall(tool, insertToolCall) {
-  if (typeof forceModals == "function" && (insertToolCall || getProperty("safeStartAllOperations"))) {
-    forceModals();
+  if (!isFirstSection()) {
+    writeStartBlocks(!getProperty("safeStartAllOperations") && insertToolCall, function () {
+      writeRetract(Z); // write optional Z retract before tool change if safeStartAllOperations is enabled
+    });
   }
   writeStartBlocks(insertToolCall, function () {
-    if (!retracted) {
-      writeRetract(Z);
+    writeRetract(Z);
+    if (getSetting("retract.homeXY.onToolChange", false)) {
+      writeRetract(settings.retract.homeXY.onToolChange);
     }
     if (!isFirstSection() && insertToolCall) {
       if (typeof forceWorkPlane == "function") {
@@ -1538,6 +1570,9 @@ function writeToolCall(tool, insertToolCall) {
       onCommand(COMMAND_LOAD_TOOL);
     }
   });
+  if (typeof forceModals == "function" && (insertToolCall || getProperty("safeStartAllOperations"))) {
+    forceModals();
+  }
 }
 // <<<<< INCLUDED FROM include_files/writeToolCall.cpi
 // >>>>> INCLUDED FROM include_files/startSpindle.cpi
@@ -1971,7 +2006,7 @@ function writeProgramHeader() {
       if (tools.getNumberOfTools() > 0) {
         for (var i = 0; i < tools.getNumberOfTools(); ++i) {
           var tool = tools.getTool(i);
-          var comment = "T" + toolFormat.format(tool.number) + " " +
+          var comment = (getProperty("toolAsName") ? "\"" + tool.description.toUpperCase() + "\"" : "T" + toolFormat.format(tool.number)) + " " +
           "D=" + xyzFormat.format(tool.diameter) + " " +
           localize("CR") + "=" + xyzFormat.format(tool.cornerRadius);
           if ((tool.taperAngle > 0) && (tool.taperAngle < Math.PI)) {
@@ -2273,10 +2308,8 @@ function subprogramDefine(_initialPosition, _abc) {
     if (subprogramDefinition.isValid) {
       // make sure Z-position is output prior to subprogram call
       var z = zOutput.format(_initialPosition.z);
-      if (!retracted && z) {
-        if (typeof lengthCompensationActive != "undefined") {
-          validate(lengthCompensationActive, "Tool length compensation is not active."); // make sure that length compensation is enabled
-        }
+      if (!state.retractedZ && z) {
+        validate(!validateLengthCompensation || state.lengthCompensationActive, "Tool length compensation is not active."); // make sure that length compensation is enabled
         var block = "";
         if (typeof gAbsIncModal != "undefined") {
           block += gAbsIncModal.format(90);
@@ -2429,14 +2462,21 @@ function setAbsIncMode(incremental, xyz, abc) {
 }
 
 function setCyclePosition(_position) {
-  switch (gPlaneModal.getCurrent()) {
-  case 17: // XY
+  var _spindleAxis;
+  if (typeof gPlaneModal != "undefined") {
+    _spindleAxis = gPlaneModal.getCurrent() == 17 ? Z : (gPlaneModal.getCurrent() == 18 ? Y : X);
+  } else {
+    var _spindleDirection = machineConfiguration.getSpindleAxis().getAbsolute();
+    _spindleAxis = isSameDirection(_spindleDirection, new Vector(0, 0, 1)) ? Z : isSameDirection(_spindleDirection, new Vector(0, 1, 0)) ? Y : X;
+  }
+  switch (_spindleAxis) {
+  case Z:
     zOutput.format(_position);
     break;
-  case 18: // ZX
+  case Y:
     yOutput.format(_position);
     break;
-  case 19: // YZ
+  case X:
     xOutput.format(_position);
     break;
   }
@@ -2675,8 +2715,9 @@ function setWorkPlane(abc) {
     abcFormat.areDifferent(abc.z, currentWorkPlaneABC.z);
 
   writeStartBlocks(workplaneIsRequired, function () {
-    if (!retracted) {
-      writeRetract(Z);
+    writeRetract(Z);
+    if (getSetting("retract.homeXY.onIndexing", false)) {
+      writeRetract(settings.retract.homeXY.onIndexing);
     }
     if (currentSection.getId() > 0 && (isTCPSupportedByOperation(getSection(currentSection.getId() - 1) || tcp.isSupportedByOperation)) && typeof disableLengthCompensation == "function") {
       disableLengthCompensation(); // cancel TCP
@@ -2718,27 +2759,33 @@ function writeRetract() {
     if (typeof gRotationModal != "undefined" && gRotationModal.getCurrent() == 68 && settings.retract.cancelRotationOnRetracting) { // cancel rotation before retracting
       cancelWorkPlane(true);
     }
-    switch (retract.method) {
-    case "G28":
-      forceModals(gMotionModal, gAbsIncModal);
-      writeBlock(gFormat.format(28), gAbsIncModal.format(91), retract.words);
-      writeBlock(gAbsIncModal.format(90));
-      break;
-    case "G30":
-      forceModals(gMotionModal, gAbsIncModal);
-      writeBlock(gFormat.format(30), gAbsIncModal.format(91), retract.words);
-      writeBlock(gAbsIncModal.format(90));
-      break;
-    case "G53":
-      forceModals(gMotionModal);
-      writeBlock(gAbsIncModal.format(90), gFormat.format(53), gMotionModal.format(0), retract.words);
-      break;
-    default:
-      if (typeof writeRetractCustom == "function") {
-        writeRetractCustom(retract);
-      } else {
-        error(subst(localize("Unsupported safe position method '%1'"), retract.method));
-        return;
+    for (var i in retract.words) {
+      var words = retract.singleLine ? retract.words : retract.words[i];
+      switch (retract.method) {
+      case "G28":
+        forceModals(gMotionModal, gAbsIncModal);
+        writeBlock(gFormat.format(28), gAbsIncModal.format(91), words);
+        writeBlock(gAbsIncModal.format(90));
+        break;
+      case "G30":
+        forceModals(gMotionModal, gAbsIncModal);
+        writeBlock(gFormat.format(30), gAbsIncModal.format(91), words);
+        writeBlock(gAbsIncModal.format(90));
+        break;
+      case "G53":
+        forceModals(gMotionModal);
+        writeBlock(gAbsIncModal.format(90), gFormat.format(53), gMotionModal.format(0), words);
+        break;
+      default:
+        if (typeof writeRetractCustom == "function") {
+          writeRetractCustom(retract);
+        } else {
+          error(subst(localize("Unsupported safe position method '%1'"), retract.method));
+          return;
+        }
+      }
+      if (retract.singleLine) {
+        break;
       }
     }
   }
@@ -2775,7 +2822,7 @@ function writeInitialPositioning(position, isRequired, codes1, codes2) {
   writeStartBlocks(isRequired, function() {
     var modalCodes = formatWords(gAbsIncModal.format(90), gPlaneModal.format(17));
     if (typeof disableLengthCompensation == "function") {
-      disableLengthCompensation(false); // cancel tool length compensation prior to enabling it, required when switching G43/G43.4 modes
+      disableLengthCompensation(!isRequired); // cancel tool length compensation prior to enabling it, required when switching G43/G43.4 modes
     }
 
     // multi axis prepositioning with TWP
@@ -2789,7 +2836,7 @@ function writeInitialPositioning(position, isRequired, codes1, codes2) {
       writeBlock(modalCodes, gMotionModal.format(motionCode.multi), xOutput.format(prePosition.x), yOutput.format(prePosition.y), feed, additionalCodes[0]);
       cancelWorkPlane();
       writeBlock(gOffset, hOffset, additionalCodes[1]); // omit Z-axis output is desired
-      lengthCompensationActive = true;
+      state.lengthCompensationActive = true;
       forceAny(); // required to output XYZ coordinates in the following line
     } else {
       if (machineConfiguration.isHeadConfiguration()) {
@@ -2801,7 +2848,7 @@ function writeInitialPositioning(position, isRequired, codes1, codes2) {
         writeBlock(modalCodes, gMotionModal.format(motionCode.multi), xOutput.format(position.x), yOutput.format(position.y), feed, additionalCodes[0]);
         writeBlock(gMotionModal.format(motionCode.single), gOffset, zOutput.format(position.z), hOffset, additionalCodes[1]);
       }
-      lengthCompensationActive = true;
+      state.lengthCompensationActive = true;
     }
     forceModals(gMotionModal);
     if (isRequired) {
@@ -2809,10 +2856,10 @@ function writeInitialPositioning(position, isRequired, codes1, codes2) {
     }
   });
 
-  validate(lengthCompensationActive, "Tool length compensation is not active."); // make sure that lenght compensation is enabled
+  validate(!validateLengthCompensation || state.lengthCompensationActive, "Tool length compensation is not active."); // make sure that lenght compensation is enabled
   if (!isRequired) { // simple positioning
     var modalCodes = formatWords(gAbsIncModal.format(90), gPlaneModal.format(17));
-    if (!retracted && xyzFormat.getResultingValue(getCurrentPosition().z) < xyzFormat.getResultingValue(position.z)) {
+    if (!state.retractedZ && xyzFormat.getResultingValue(getCurrentPosition().z) < xyzFormat.getResultingValue(position.z)) {
       writeBlock(modalCodes, gMotionModal.format(motionCode.single), zOutput.format(position.z), feed);
     }
     forceXYZ();
