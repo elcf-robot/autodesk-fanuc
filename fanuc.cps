@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44115 abe43b1cb5d1c57dbcb926eca04460e350c49211 $
-  $Date: 2024-03-15 10:31:09 $
+  $Revision: 44116 cfea0ebc1bd29b6dc2c66d2d48e7aab1fa0ac22e $
+  $Date: 2024-03-22 10:11:57 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -3790,8 +3790,18 @@ function protectedProbeMove(_cycle, x, y, z) {
 function setProbeAngle() {
   if (probeVariables.outputRotationCodes) {
     validate(settings.probing.probeAngleVariables, localize("Setting 'probing.probeAngleVariables' is required for angular probing."));
-    var {x: px, y: py, z: pz, i: pi, j: pj, k: pk, r: pr, baseParamG54x4, baseParamAxisRot} = settings.probing.probeAngleVariables;
+    var probeAngleVariables = settings.probing.probeAngleVariables;
+    var px = probeAngleVariables.x;
+    var py = probeAngleVariables.y;
+    var pz = probeAngleVariables.z;
+    var pi = probeAngleVariables.i;
+    var pj = probeAngleVariables.j;
+    var pk = probeAngleVariables.k;
+    var pr = probeAngleVariables.r;
+    var baseParamG54x4 = probeAngleVariables.baseParamG54x4;
+    var baseParamAxisRot = probeAngleVariables.baseParamAxisRot;
     var probeOutputWorkOffset = currentSection.probeWorkOffset;
+
     validate(probeOutputWorkOffset <= 6, "Angular Probing only supports work offsets 1-6.");
     if (probeVariables.probeAngleMethod == "G68" && (Vector.diff(currentSection.getGlobalInitialToolAxis(), new Vector(0, 0, 1)).length > 1e-4)) {
       error(localize("You cannot use multi axis toolpaths while G68 Rotation is in effect."));
