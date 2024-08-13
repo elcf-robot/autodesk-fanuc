@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44136 958a4f328bdf1f58a6e166487214998e1f7fb2a3 $
-  $Date: 2024-07-29 13:11:00 $
+  $Revision: 44139 0259c895382ecfb41f7c10a6db779e07e9608b4c $
+  $Date: 2024-08-07 13:17:19 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -668,6 +668,8 @@ function onCommand(command) {
   case COMMAND_PROBE_ON:
     return;
   case COMMAND_PROBE_OFF:
+    return;
+  case COMMAND_LIVE_ALIGNMENT:
     return;
   }
 
