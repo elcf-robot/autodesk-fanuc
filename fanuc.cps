@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44155 c7484e5d16072dec47fddad89ef85ab59f07423c $
-  $Date: 2024-12-13 16:41:18 $
+  $Revision: 44159 73b4cc8c7624bab4e37640c297e2704e9cf02210 $
+  $Date: 2025-01-06 13:19:52 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -347,7 +347,6 @@ var settings = {
     eulerConvention       : EULER_ZXZ_R, // specifies the euler convention (ie EULER_XYZ_R), set to undefined to use machine angles for TWP commands ('undefined' requires machine configuration)
     eulerCalculationMethod: "standard", // ('standard' / 'machine') 'machine' adjusts euler angles to match the machines ABC orientation, machine configuration required
     cancelTiltFirst       : true, // cancel tilted workplane prior to WCS (G54-G59) blocks
-    useABCPrepositioning  : false, // position ABC axes prior to tilted workplane blocks
     forceMultiAxisIndexing: false, // force multi-axis indexing for 3D programs
     optimizeType          : undefined // can be set to OPTIMIZE_NONE, OPTIMIZE_BOTH, OPTIMIZE_TABLES, OPTIMIZE_HEADS, OPTIMIZE_AXIS. 'undefined' uses legacy rotations
   },
@@ -841,8 +840,7 @@ function activateMachine() {
   // setup usage of useTiltedWorkplane
   settings.workPlaneMethod.useTiltedWorkplane = getProperty("useTiltedWorkplane") != undefined ? getProperty("useTiltedWorkplane") :
     getSetting("workPlaneMethod.useTiltedWorkplane", false);
-  settings.workPlaneMethod.useABCPrepositioning = getProperty("useABCPrepositioning") != undefined ? getProperty("useABCPrepositioning") :
-    getSetting("workPlaneMethod.useABCPrepositioning", false);
+  settings.workPlaneMethod.useABCPrepositioning = getSetting("workPlaneMethod.useABCPrepositioning", true);
 
   if (!machineConfiguration.isMultiAxisConfiguration()) {
     return; // don't need to modify any settings for 3-axis machines
@@ -874,11 +872,7 @@ function activateMachine() {
     safeRetractDistance = getProperty("safeRetractDistance");
   }
 
-  if (machineConfiguration.isHeadConfiguration()) {
-    compensateToolLength = typeof compensateToolLength == "undefined" ? false : compensateToolLength;
-  }
-
-  if (machineConfiguration.isHeadConfiguration() && compensateToolLength) {
+  if (machineConfiguration.isHeadConfiguration() && getSetting("workPlaneMethod.compensateToolLength", false)) {
     for (var i = 0; i < getNumberOfSections(); ++i) {
       var section = getSection(i);
       if (section.isMultiAxis()) {
@@ -895,7 +889,11 @@ function getBodyLength(tool) {
   for (var i = 0; i < getNumberOfSections(); ++i) {
     var section = getSection(i);
     if (tool.number == section.getTool().number) {
-      return section.getParameter("operation:tool_overallLength", tool.bodyLength + tool.holderLength);
+      if (section.hasParameter("operation:tool_assemblyGaugeLength")) { // For Fusion
+        return tool.bodyLength + tool.holderLength;
+      } else  { // Legacy products
+        return section.getParameter("operation:tool_overallLength", tool.bodyLength + tool.holderLength);
+      }
     }
   }
   return tool.bodyLength + tool.holderLength;
@@ -1468,7 +1466,6 @@ function machineSimulation(parameters) {
 }
 // <<<<< INCLUDED FROM include_files/commonFunctions.cpi
 // >>>>> INCLUDED FROM include_files/defineMachine.cpi
-var compensateToolLength = false; // add the tool length to the pivot distance for nonTCP rotary heads
 function defineMachine() {
   var useTCP = true;
   if (false) { // note: setup your machine here
@@ -1594,7 +1591,7 @@ function getWorkPlaneMachineABC(_section, rotate) {
       setRotation(useTCP ? _section.workPlane : R);
     } else {
       if (!_section.isOptimizedForMachine()) {
-        machineConfiguration.setToolLength(compensateToolLength ? _section.getTool().overallLength : 0); // define the tool length for head adjustments
+        machineConfiguration.setToolLength(getSetting("workPlaneMethod.compensateToolLength", false) ? getBodyLength(_section.getTool()) : 0); // define the tool length for head adjustments
         _section.optimize3DPositionsByMachine(machineConfiguration, abc, settings.workPlaneMethod.optimizeType);
       }
     }
