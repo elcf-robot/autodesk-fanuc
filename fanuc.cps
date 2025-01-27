@@ -1,11 +1,11 @@
 /**
-  Copyright (C) 2012-2024 by Autodesk, Inc.
+  Copyright (C) 2012-2025 by Autodesk, Inc.
   All rights reserved.
 
   FANUC post processor configuration.
 
-  $Revision: 44159 73b4cc8c7624bab4e37640c297e2704e9cf02210 $
-  $Date: 2025-01-06 13:19:52 $
+  $Revision: 44161 57e1a9f900ef4ff56310f49716bac637f473fc94 $
+  $Date: 2025-01-22 17:49:05 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -13,7 +13,7 @@
 description = "FANUC";
 vendor = "Fanuc";
 vendorUrl = "http://www.fanuc.com";
-legal = "Copyright (C) 2012-2024 by Autodesk, Inc.";
+legal = "Copyright (C) 2012-2025 by Autodesk, Inc.";
 certificationLevel = 2;
 minimumRevision = 45917;
 
@@ -3061,11 +3061,11 @@ function writeInitialPositioning(position, isRequired, codes1, codes2) {
   validate(!validateLengthCompensation || state.lengthCompensationActive, "Tool length compensation is not active."); // make sure that lenght compensation is enabled
   if (!isRequired) { // simple positioning
     var modalCodes = formatWords(gAbsIncModal.format(90), gPlaneModal.format(17));
+    forceXYZ();
     if (!state.retractedZ && xyzFormat.getResultingValue(getCurrentPosition().z) < xyzFormat.getResultingValue(position.z)) {
       writeBlock(modalCodes, gMotionModal.format(motionCode.single), zOutput.format(position.z), feed);
       machineSimulation({z:position.z});
     }
-    forceXYZ();
     writeBlock(modalCodes, gMotionModal.format(motionCode.multi), xOutput.format(position.x), yOutput.format(position.y), feed, additionalCodes);
     machineSimulation({x:position.x, y:position.y});
   }
