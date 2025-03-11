@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44166 e813d608ccd22fb0949f73fcdb773b434407b131 $
-  $Date: 2025-02-19 11:52:14 $
+  $Revision: 44168 693f63a68cfb67ec4ae6e75af05d444bd32a75b0 $
+  $Date: 2025-03-07 12:41:08 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -390,9 +390,6 @@ function onOpen() {
   if (getProperty("useRadius")) {
     maximumCircularSweep = toRad(90); // avoid potential center calculation errors for CNC
   }
-
-  // initialize formats
-  gRotationModal.format(69); // Default to G69 Rotation Off
 
   if (!getProperty("separateWordsWithSpace")) {
     setWordSeparator("");
@@ -1414,9 +1411,7 @@ function machineSimulation(parameters) {
   var disableTWP = !enableTWP;
   // update TCP mode
   if (enableTCP) {
-    simulation.setTWPModeOff();
     simulation.setTCPModeOn();
-    isTwpOn = false;
     isTcpOn = true;
   }
   if (disableTCP) {
@@ -1425,14 +1420,12 @@ function machineSimulation(parameters) {
   }
   // update TWP mode
   if (enableTWP) {
-    simulation.setTCPModeOff();
     if (settings.workPlaneMethod.eulerConvention == undefined) {
       simulation.setTWPModeAlignToCurrentPose();
     } else if (eulerAngles) {
       simulation.setTWPModeByEulerAngles(settings.workPlaneMethod.eulerConvention, eulerAngles.x, eulerAngles.y, eulerAngles.z);
     }
     isTwpOn = true;
-    isTcpOn = false;
   }
   if (disableTWP) {
     simulation.setTWPModeOff();
@@ -2879,6 +2872,7 @@ var gRotationModal = createOutputVariable({current : 69,
     if (typeof probeVariables != "undefined") {
       probeVariables.outputRotationCodes = probeVariables.probeAngleMethod == "G68";
     }
+    machineSimulation({}); // update machine simulation TWP state
   }}, gFormat);
 
 var currentWorkPlaneABC = undefined;
@@ -3099,6 +3093,7 @@ var toolLengthCompOutput = createOutputVariable({control : CONTROL_FORCE,
   onchange: function() {
     state.tcpIsActive = toolLengthCompOutput.getCurrent() == 43.4 || toolLengthCompOutput.getCurrent() == 43.5;
     state.lengthCompensationActive = toolLengthCompOutput.getCurrent() != 49;
+    machineSimulation({}); // update machine simulation TCP state
   }
 }, gFormat);
 
