@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44168 693f63a68cfb67ec4ae6e75af05d444bd32a75b0 $
-  $Date: 2025-03-07 12:41:08 $
+  $Revision: 44174 c9be104562752d2d82655075e0367708843f3963 $
+  $Date: 2025-04-17 13:58:42 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -887,7 +887,7 @@ function getBodyLength(tool) {
     var section = getSection(i);
     if (tool.number == section.getTool().number) {
       if (section.hasParameter("operation:tool_assemblyGaugeLength")) { // For Fusion
-        return tool.bodyLength + tool.holderLength;
+        return section.getParameter("operation:tool_assemblyGaugeLength", tool.bodyLength + tool.holderLength);
       } else  { // Legacy products
         return section.getParameter("operation:tool_overallLength", tool.bodyLength + tool.holderLength);
       }
@@ -1337,8 +1337,8 @@ var MACHINE = "MACHINE CS";
 var MIN = "MIN";
 var MAX = "MAX";
 var WARNING_NON_RANGE = [0, 1, 2];
-var isTwpOn; // only used for debugging
-var isTcpOn; // only used for debugging
+var isTwpOn;
+var isTcpOn;
 /**
  * Helper function for connection moves in machine simulation.
  * @param {Object} parameters An object containing the desired options for machine simulation.
@@ -1358,8 +1358,8 @@ var isTcpOn; // only used for debugging
   machineSimulation({x:toPreciseUnit(200, MM), y:toPreciseUnit(200, MM), coordinates:MACHINE, mode:TOOLCHANGE});
 */
 function machineSimulation(parameters) {
-  if (revision < 50075 || skipBlocks) {
-    return; // return when post kernel revision is lower than 50075 or when skipBlocks is enabled
+  if (revision < 50198 || skipBlocks) {
+    return; // return when post kernel revision is lower than 50198 or when skipBlocks is enabled
   }
   getAxisLimit = function(axis, limit) {
     validate(limit == MIN || limit == MAX, subst(localize("Invalid argument \"%1\" passed to the machineSimulation function."), limit));
@@ -1393,32 +1393,30 @@ function machineSimulation(parameters) {
   }
 
   // mode takes precedence over TCP/TWP states
-  var enableTCP = false;
-  var enableTWP = false;
-  if (mode === TCPON) {
-    enableTCP = true;
-  } else if (mode === TCPOFF) {
-    enableTWP = typeof state !== "undefined" && state.twpIsActive;
-  } else if (mode === TWPON) {
-    enableTWP = true;
-  } else if (mode === TWPOFF) {
-    enableTCP = typeof state !== "undefined" && state.tcpIsActive;
+  var enableTCP = isTcpOn;
+  var enableTWP = isTwpOn;
+  if (mode === TCPON || mode === TCPOFF) {
+    enableTCP = mode === TCPON;
+  } else if (mode === TWPON || mode === TWPOFF) {
+    enableTWP = mode === TWPON;
   } else {
     enableTCP = typeof state !== "undefined" && state.tcpIsActive;
     enableTWP = typeof state !== "undefined" && state.twpIsActive;
   }
   var disableTCP = !enableTCP;
   var disableTWP = !enableTWP;
-  // update TCP mode
-  if (enableTCP) {
-    simulation.setTCPModeOn();
-    isTcpOn = true;
+  if (disableTWP) {
+    simulation.setTWPModeOff();
+    isTwpOn = false;
   }
   if (disableTCP) {
     simulation.setTCPModeOff();
     isTcpOn = false;
   }
-  // update TWP mode
+  if (enableTCP) {
+    simulation.setTCPModeOn();
+    isTcpOn = true;
+  }
   if (enableTWP) {
     if (settings.workPlaneMethod.eulerConvention == undefined) {
       simulation.setTWPModeAlignToCurrentPose();
@@ -1426,10 +1424,6 @@ function machineSimulation(parameters) {
       simulation.setTWPModeByEulerAngles(settings.workPlaneMethod.eulerConvention, eulerAngles.x, eulerAngles.y, eulerAngles.z);
     }
     isTwpOn = true;
-  }
-  if (disableTWP) {
-    simulation.setTWPModeOff();
-    isTwpOn = false;
   }
   if (mode == RETRACTTOOLAXIS) {
     simulation.retractAlongToolAxisToLimit();
