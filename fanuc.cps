@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44174 c9be104562752d2d82655075e0367708843f3963 $
-  $Date: 2025-04-17 13:58:42 $
+  $Revision: 44176 86db4cf684d3dd5c800109b31efce1e349d19808 $
+  $Date: 2025-04-29 05:48:31 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -3646,6 +3646,11 @@ function writeProbeCycle(cycle, x, y, z, P, F) {
         error(localize("Updating WCS / work offset using probing is only supported by the CNC in the WCS frame."));
         return;
       }
+    }
+    var isPatterned = currentSection.isPatterned && currentSection.isPatterned();
+    var isMirrored = currentSection.getInternalPatternId && currentSection.getInternalPatternId() != currentSection.getPatternId();
+    if (isPatterned || isMirrored) {
+      error(localize("Pattern functionality is not supported for Probing toolpaths."));
     }
     if (printProbeResults()) {
       writeProbingToolpathInformation(z - cycle.depth + tool.diameter / 2);
