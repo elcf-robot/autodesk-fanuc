@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44176 86db4cf684d3dd5c800109b31efce1e349d19808 $
-  $Date: 2025-04-29 05:48:31 $
+  $Revision: 44177 1a6b6210678b806fd0e8b37f5aba8b59a7c7089d $
+  $Date: 2025-05-08 11:17:01 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -3647,10 +3647,14 @@ function writeProbeCycle(cycle, x, y, z, P, F) {
         return;
       }
     }
-    var isPatterned = currentSection.isPatterned && currentSection.isPatterned();
     var isMirrored = currentSection.getInternalPatternId && currentSection.getInternalPatternId() != currentSection.getPatternId();
-    if (isPatterned || isMirrored) {
-      error(localize("Pattern functionality is not supported for Probing toolpaths."));
+    validate(!isMirrored, "Mirror pattern is not supported for Probing toolpaths.");
+    if (currentSection.isPatterned && currentSection.isPatterned()) {
+      // probe cycles that cannot be used with patterns
+      var unsupportedCycleTypes = ["probing-x", "probing-y", "probing-xy-inner-corner", "probing-xy-outer-corner", "probing-x-plane-angle", "probing-y-plane-angle"];
+      if (unsupportedCycleTypes.indexOf(cycleType) > -1 && (!Matrix.diff(getSection(0).workPlane, currentSection.workPlane).isZero())) {
+        error(subst("Rotary type patterns are not supported for the Probing cycle type '%1'.", cycleType));
+      }
     }
     if (printProbeResults()) {
       writeProbingToolpathInformation(z - cycle.depth + tool.diameter / 2);
