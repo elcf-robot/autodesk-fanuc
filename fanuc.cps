@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44177 1a6b6210678b806fd0e8b37f5aba8b59a7c7089d $
-  $Date: 2025-05-08 11:17:01 $
+  $Revision: 44180 532b0f074e728f621fe2e2df6c1d4f67ef22ea16 $
+  $Date: 2025-05-26 11:21:58 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -3652,7 +3652,7 @@ function writeProbeCycle(cycle, x, y, z, P, F) {
     if (currentSection.isPatterned && currentSection.isPatterned()) {
       // probe cycles that cannot be used with patterns
       var unsupportedCycleTypes = ["probing-x", "probing-y", "probing-xy-inner-corner", "probing-xy-outer-corner", "probing-x-plane-angle", "probing-y-plane-angle"];
-      if (unsupportedCycleTypes.indexOf(cycleType) > -1 && (!Matrix.diff(getSection(0).workPlane, currentSection.workPlane).isZero())) {
+      if (unsupportedCycleTypes.indexOf(cycleType) > -1 && (!Matrix.diff(new Matrix(), currentSection.workPlane).isZero())) {
         error(subst("Rotary type patterns are not supported for the Probing cycle type '%1'.", cycleType));
       }
     }
@@ -3896,7 +3896,6 @@ function writeProbeCycle(cycle, x, y, z, P, F) {
       getProbingArguments(cycle, true)
     );
     break;
-
   case "probing-xy-inner-corner":
     var cornerX = x + approach(cycle.approach1) * (cycle.probeClearance + tool.diameter / 2);
     var cornerY = y + approach(cycle.approach2) * (cycle.probeClearance + tool.diameter / 2);
@@ -4008,6 +4007,8 @@ function writeProbeCycle(cycle, x, y, z, P, F) {
       return;
     }
     break;
+  default:
+    cycleNotSupported();
   }
 }
 
