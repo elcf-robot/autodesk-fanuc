@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44180 532b0f074e728f621fe2e2df6c1d4f67ef22ea16 $
-  $Date: 2025-05-26 11:21:58 $
+  $Revision: 44182 7116c353db967b3101893a9fbf082bfdfea871ba $
+  $Date: 2025-06-13 07:24:07 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -176,6 +176,14 @@ properties = {
     group      : "probing",
     type       : "boolean",
     value      : false,
+    scope      : "post"
+  },
+  useTiltedWorkplane: {
+    title      : "Use G68.2",
+    description: "Enable to use G68.2 for 3+2 operations.",
+    group      : "multiAxis",
+    type       : "boolean",
+    value      : true,
     scope      : "post"
   },
   safeStartAllOperations: {
@@ -374,7 +382,8 @@ var settings = {
     allowIndexingWCSProbing: false // specifies that probe WCS with tool orientation is supported
   },
   maximumSequenceNumber   : undefined, // the maximum sequence number (Nxxx), use 'undefined' for unlimited
-  supportsToolVectorOutput: true // specifies if the control does support tool axis vector output for multi axis toolpath
+  supportsToolVectorOutput: true, // specifies if the control does support tool axis vector output for multi axis toolpath
+  polarCycleExpandMode    : EXPAND_TCP // EXPAND_NONE: Does not expand any cycles. EXPAND_TCP: Expands drilling cycles, when TCP is on. EXPAND_NON_TCP: Expands drilling cycles, when TCP is off. EXPAND_ALL: Expands all drilling cycles
 };
 
 function onOpen() {
@@ -867,6 +876,10 @@ function activateMachine() {
   }
   if (typeof safeRetractDistance == "number" && getProperty("safeRetractDistance") != undefined && getProperty("safeRetractDistance") != 0) {
     safeRetractDistance = getProperty("safeRetractDistance");
+  }
+
+  if (revision >= 50294)  {
+    activateAutoPolarMode({tolerance:tolerance / 2, optimizeType:OPTIMIZE_AXIS, expandCycles:getSetting("polarCycleExpandMode", EXPAND_ALL)});
   }
 
   if (machineConfiguration.isHeadConfiguration() && getSetting("workPlaneMethod.compensateToolLength", false)) {
@@ -3153,6 +3166,7 @@ function writeDrillCycle(cycle, x, y, z) {
     // return to initial Z which is clearance plane and set absolute mode
     repositionToCycleClearance(cycle, x, y, z);
 
+    writeBlock(gFeedModeModal.format(getProperty("useG95") || (isTappingCycle() && getProperty("usePitchForTapping")) ? 95 : 94));
     var F = getProperty("useG95") ? (cycle.feedrate / spindleSpeed) : cycle.feedrate;
     var P = !cycle.dwell ? 0 : clamp(1, cycle.dwell * 1000, 99999999); // in milliseconds
     switch (cycleType) {
@@ -3205,73 +3219,21 @@ function writeDrillCycle(cycle, x, y, z) {
       }
       break;
     case "tapping":
-      if (getProperty("useRigidTapping") != "no") {
-        writeBlock(mFormat.format(29), sOutput.format(spindleSpeed));
-      }
-      if (getProperty("usePitchForTapping")) {
-        writeBlock(
-          gRetractModal.format(98), gFeedModeModal.format(95), gCycleModal.format((tool.type == TOOL_TAP_LEFT_HAND) ? 74 : 84),
-          getCommonCycle(x, y, z, cycle.retract, cycle.clearance),
-          "P" + milliFormat.format(P),
-          pitchOutput.format(tool.threadPitch)
-        );
-        forceFeed();
-      } else {
-        var tappingFPM = tool.getThreadPitch() * rpmFormat.getResultingValue(spindleSpeed);
-        F = (getProperty("useG95") ? tool.getThreadPitch() : tappingFPM);
-        writeBlock(
-          gRetractModal.format(98), gCycleModal.format((tool.type == TOOL_TAP_LEFT_HAND) ? 74 : 84),
-          getCommonCycle(x, y, z, cycle.retract, cycle.clearance),
-          "P" + milliFormat.format(P),
-          feedOutput.format(F)
-        );
-      }
-      break;
     case "left-tapping":
-      if (getProperty("useRigidTapping") != "no") {
-        writeBlock(mFormat.format(29), sOutput.format(spindleSpeed));
-      }
-      if (getProperty("usePitchForTapping")) {
-        writeBlock(
-          gRetractModal.format(98), gFeedModeModal.format(95), gCycleModal.format(74),
-          getCommonCycle(x, y, z, cycle.retract, cycle.clearance),
-          "P" + milliFormat.format(P),
-          pitchOutput.format(tool.threadPitch)
-        );
-        forceFeed();
-      } else {
-        var tappingFPM = tool.getThreadPitch() * rpmFormat.getResultingValue(spindleSpeed);
-        F = (getProperty("useG95") ? tool.getThreadPitch() : tappingFPM);
-        writeBlock(
-          gRetractModal.format(98), gCycleModal.format(74),
-          getCommonCycle(x, y, z, cycle.retract, cycle.clearance),
-          "P" + milliFormat.format(P),
-          feedOutput.format(F)
-        );
-      }
-      break;
     case "right-tapping":
       if (getProperty("useRigidTapping") != "no") {
         writeBlock(mFormat.format(29), sOutput.format(spindleSpeed));
       }
-      if (getProperty("usePitchForTapping")) {
-        writeBlock(
-          gRetractModal.format(98), gFeedModeModal.format(95), gCycleModal.format(84),
-          getCommonCycle(x, y, z, cycle.retract, cycle.clearance),
-          "P" + milliFormat.format(P),
-          pitchOutput.format(tool.threadPitch)
-        );
-        forceFeed();
-      } else {
-        var tappingFPM = tool.getThreadPitch() * rpmFormat.getResultingValue(spindleSpeed);
-        F = (getProperty("useG95") ? tool.getThreadPitch() : tappingFPM);
-        writeBlock(
-          gRetractModal.format(98), gCycleModal.format(84),
-          getCommonCycle(x, y, z, cycle.retract, cycle.clearance),
-          "P" + milliFormat.format(P),
-          feedOutput.format(F)
-        );
-      }
+      var cycleCode = (cycleType == "left-tapping" || (cycleType == "tapping" && tool.type == TOOL_TAP_LEFT_HAND)) ? 74 : 84;
+      var tappingFPM = tool.getThreadPitch() * rpmFormat.getResultingValue(spindleSpeed);
+      F = (getProperty("useG95") || getProperty("usePitchForTapping") ? tool.getThreadPitch() : tappingFPM);
+      writeBlock(
+        gRetractModal.format(98), gCycleModal.format(cycleCode),
+        getCommonCycle(x, y, z, cycle.retract, cycle.clearance),
+        "P" + milliFormat.format(P),
+        getProperty("usePitchForTapping") ? pitchOutput.format(F) : feedOutput.format(F)
+      );
+      forceFeed();
       break;
     case "tapping-with-chip-breaking":
     case "left-tapping-with-chip-breaking":
@@ -3283,26 +3245,17 @@ function writeDrillCycle(cycle, x, y, z) {
         if (getProperty("useRigidTapping") != "no") {
           writeBlock(mFormat.format(29), sOutput.format(spindleSpeed));
         }
-        if (getProperty("usePitchForTapping")) {
-          writeBlock(
-            gRetractModal.format(98), gFeedModeModal.format(95), gCycleModal.format((tool.type == TOOL_TAP_LEFT_HAND ? 74 : 84)),
-            getCommonCycle(x, y, z, cycle.retract, cycle.clearance),
-            "P" + milliFormat.format(P),
-            peckOutput.format(cycle.incrementalDepth),
-            pitchOutput.format(tool.threadPitch)
-          );
-          forceFeed();
-        } else {
-          var tappingFPM = tool.getThreadPitch() * rpmFormat.getResultingValue(spindleSpeed);
-          F = (getProperty("useG95") ? tool.getThreadPitch() : tappingFPM);
-          writeBlock(
-            gRetractModal.format(98), gCycleModal.format((tool.type == TOOL_TAP_LEFT_HAND ? 74 : 84)),
-            getCommonCycle(x, y, z, cycle.retract, cycle.clearance),
-            "P" + milliFormat.format(P),
-            peckOutput.format(cycle.incrementalDepth),
-            feedOutput.format(F)
-          );
-        }
+        var cycleCode = (cycleType == "left-tapping-with-chip-breaking" || (cycleType == "tapping-with-chip-breaking" && tool.type == TOOL_TAP_LEFT_HAND)) ? 74 : 84;
+        var tappingFPM = tool.getThreadPitch() * rpmFormat.getResultingValue(spindleSpeed);
+        F = (getProperty("useG95") || getProperty("usePitchForTapping") ? tool.getThreadPitch() : tappingFPM);
+        writeBlock(
+          gRetractModal.format(98), gCycleModal.format(cycleCode),
+          getCommonCycle(x, y, z, cycle.retract, cycle.clearance),
+          "P" + milliFormat.format(P),
+          peckOutput.format(cycle.incrementalDepth),
+          getProperty("usePitchForTapping") ? pitchOutput.format(F) : feedOutput.format(F)
+        );
+        forceFeed();
       }
       break;
     case "fine-boring":
@@ -3417,7 +3370,14 @@ function writeDrillCycle(cycle, x, y, z) {
       if (subprogramsAreSupported() && subprogramState.incrementalMode) { // set current position to retract height
         setCyclePosition(cycle.retract);
       }
-      writeBlock(xOutput.format(x), yOutput.format(y), zOutput.format(z));
+      if (currentSection.polarMode != POLAR_MODE_OFF && currentSection.isMultiAxis()) {
+        var polarPosition = getPolarPosition(x, y, z);
+        setCurrentPositionAndDirection(polarPosition);
+        writeBlock(xOutput.format(polarPosition.first.x), yOutput.format(polarPosition.first.y), zOutput.format(polarPosition.first.z),
+          aOutput.format(polarPosition.second.x), bOutput.format(polarPosition.second.y), cOutput.format(polarPosition.second.z));
+      } else {
+        writeBlock(xOutput.format(x), yOutput.format(y), zOutput.format(z));
+      }
       if (subprogramsAreSupported() && subprogramState.incrementalMode) { // set current position to clearance height
         setCyclePosition(cycle.clearance);
       }
@@ -3427,15 +3387,18 @@ function writeDrillCycle(cycle, x, y, z) {
 
 function getCommonCycle(x, y, z, r, c) {
   forceXYZ(); // force xyz on first drill hole of any cycle
-  if (subprogramsAreSupported() && subprogramState.incrementalMode) {
-    zOutput.format(c);
-    return [xOutput.format(x), yOutput.format(y),
-      "Z" + xyzFormat.format(z - r),
-      "R" + xyzFormat.format(r - c)];
-  } else {
-    return [xOutput.format(x), yOutput.format(y),
-      zOutput.format(z),
+  if (currentSection.polarMode != POLAR_MODE_OFF && currentSection.isMultiAxis()) {
+    var polarPosition = getPolarPosition(x, y, z);
+    return [xOutput.format(polarPosition.first.x), yOutput.format(polarPosition.first.y), zOutput.format(polarPosition.first.z),
+      aOutput.format(polarPosition.second.x), bOutput.format(polarPosition.second.y), cOutput.format(polarPosition.second.z),
       "R" + xyzFormat.format(r)];
+  } else {
+    if (subprogramsAreSupported() && subprogramState.incrementalMode) {
+      zOutput.format(c);
+      return [xOutput.format(x), yOutput.format(y), "Z" + xyzFormat.format(z - r), "R" + xyzFormat.format(r - c)];
+    } else {
+      return [xOutput.format(x), yOutput.format(y), zOutput.format(z), "R" + xyzFormat.format(r)];
+    }
   }
 }
 // <<<<< INCLUDED FROM include_files/drillCycles_fanuc.cpi
