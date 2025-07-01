@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44182 7116c353db967b3101893a9fbf082bfdfea871ba $
-  $Date: 2025-06-13 07:24:07 $
+  $Revision: 44184 4a476cddfb340b6d03fbc2675407091c182605b4 $
+  $Date: 2025-06-25 11:13:43 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -383,7 +383,7 @@ var settings = {
   },
   maximumSequenceNumber   : undefined, // the maximum sequence number (Nxxx), use 'undefined' for unlimited
   supportsToolVectorOutput: true, // specifies if the control does support tool axis vector output for multi axis toolpath
-  polarCycleExpandMode    : EXPAND_TCP // EXPAND_NONE: Does not expand any cycles. EXPAND_TCP: Expands drilling cycles, when TCP is on. EXPAND_NON_TCP: Expands drilling cycles, when TCP is off. EXPAND_ALL: Expands all drilling cycles
+  polarCycleExpandMode    : 1 // 0=EXPAND_NONE: Does not expand any cycles. 1=EXPAND_TCP: Expands drilling cycles, when TCP is on. 2=EXPAND_NON_TCP: Expands drilling cycles, when TCP is off. 3=EXPAND_ALL: Expands all drilling cycles
 };
 
 function onOpen() {
@@ -3370,7 +3370,7 @@ function writeDrillCycle(cycle, x, y, z) {
       if (subprogramsAreSupported() && subprogramState.incrementalMode) { // set current position to retract height
         setCyclePosition(cycle.retract);
       }
-      if (currentSection.polarMode != POLAR_MODE_OFF && currentSection.isMultiAxis()) {
+      if ((currentSection.getPolarMode && currentSection.getPolarMode() != POLAR_MODE_OFF) && currentSection.isMultiAxis()) {
         var polarPosition = getPolarPosition(x, y, z);
         setCurrentPositionAndDirection(polarPosition);
         writeBlock(xOutput.format(polarPosition.first.x), yOutput.format(polarPosition.first.y), zOutput.format(polarPosition.first.z),
@@ -3387,7 +3387,7 @@ function writeDrillCycle(cycle, x, y, z) {
 
 function getCommonCycle(x, y, z, r, c) {
   forceXYZ(); // force xyz on first drill hole of any cycle
-  if (currentSection.polarMode != POLAR_MODE_OFF && currentSection.isMultiAxis()) {
+  if ((currentSection.getPolarMode && currentSection.getPolarMode() != POLAR_MODE_OFF) && currentSection.isMultiAxis()) {
     var polarPosition = getPolarPosition(x, y, z);
     return [xOutput.format(polarPosition.first.x), yOutput.format(polarPosition.first.y), zOutput.format(polarPosition.first.z),
       aOutput.format(polarPosition.second.x), bOutput.format(polarPosition.second.y), cOutput.format(polarPosition.second.z),
