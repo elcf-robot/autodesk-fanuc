@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44186 23bde517b464fd826f24aaa369bf2672c04a67ff $
-  $Date: 2025-07-07 15:28:08 $
+  $Revision: 44187 e5b7101e3e3d4be720eb5f7ef1215fd6bea618b9 $
+  $Date: 2025-07-17 05:22:31 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -356,7 +356,7 @@ var settings = {
     eulerCalculationMethod: "standard", // ('standard' / 'machine') 'machine' adjusts euler angles to match the machines ABC orientation, machine configuration required
     cancelTiltFirst       : true, // cancel tilted workplane prior to WCS (G54-G59) blocks
     forceMultiAxisIndexing: false, // force multi-axis indexing for 3D programs
-    optimizeType          : undefined // can be set to OPTIMIZE_NONE, OPTIMIZE_BOTH, OPTIMIZE_TABLES, OPTIMIZE_HEADS, OPTIMIZE_AXIS. 'undefined' uses legacy rotations
+    optimizeType          : OPTIMIZE_AXIS // can be set to OPTIMIZE_NONE, OPTIMIZE_BOTH, OPTIMIZE_TABLES, OPTIMIZE_HEADS, OPTIMIZE_AXIS. 'undefined' uses legacy rotations
   },
   subprograms: {
     initialSubprogramNumber: undefined, // specifies the initial number to be used for subprograms. 'undefined' uses the main program number
@@ -1637,7 +1637,7 @@ function positionABC(abc, force) {
 // <<<<< INCLUDED FROM include_files/positionABC.cpi
 // >>>>> INCLUDED FROM include_files/unwindABC.cpi
 function unwindABC(abc) {
-  if (settings.unwind == undefined) {
+  if (settings.unwind == undefined || machineConfiguration.isHeadConfiguration()) {
     return;
   }
   if (settings.unwind.method != 1 && settings.unwind.method != 2) {
