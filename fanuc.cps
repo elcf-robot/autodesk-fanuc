@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44188 98f153782a93410c0e8057794989ed85766a9771 $
-  $Date: 2025-07-25 14:00:30 $
+  $Revision: 44191 10f6400eaf1c75a27c852ee82b57479e7a9134c0 $
+  $Date: 2025-08-21 13:23:15 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -284,7 +284,7 @@ var jOutput = createOutputVariable({prefix:"J", control:CONTROL_NONZERO}, xyzFor
 var kOutput = createOutputVariable({prefix:"K", control:CONTROL_NONZERO}, xyzFormat);
 
 var gMotionModal = createOutputVariable({onchange:function() {if (skipBlocks) {forceModals(gMotionModal);}}}, gFormat); // modal group 1 // G0-G3, ...
-var gPlaneModal  = createOutputVariable({onchange:function() {if (skipBlocks) {forceModals(gPlaneModal);} forceModals(gMotionModal);}}, gFormat); // modal group 2 // G17-19
+var gPlaneModal = createOutputVariable({onchange:function() {if (skipBlocks) {forceModals(gPlaneModal);} forceModals(gMotionModal);}}, gFormat); // modal group 2 // G17-19
 var gAbsIncModal = createOutputVariable({onchange:function() {if (skipBlocks) {forceModals(gAbsIncModal);}}}, gFormat); // modal group 3 // G90-91
 var gFeedModeModal = createOutputVariable({}, gFormat); // modal group 5 // G94-95
 var gUnitModal = createOutputVariable({}, gFormat); // modal group 6 // G20-21
@@ -484,7 +484,8 @@ function onSection() {
   optionalSection = currentSection.isOptional();
   var insertToolCall = isToolChangeNeeded("number") || forceSectionRestart;
   var newWorkOffset = isNewWorkOffset() || forceSectionRestart;
-  var newWorkPlane = isNewWorkPlane() || forceSectionRestart;
+  var newWorkPlane = isNewWorkPlane() || forceSectionRestart || (typeof defineWorkPlane == "function" &&
+    Vector.diff(defineWorkPlane(getPreviousSection(), false), defineWorkPlane(currentSection, false)).length > 1e-4);
   operationNeedsSafeStart = getProperty("safeStartAllOperations") && !isFirstSection();
   initializeSmoothing(); // initialize smoothing mode
 
@@ -552,7 +553,7 @@ function onSection() {
 
   // prepositioning
   var initialPosition = getFramePosition(currentSection.getInitialPosition());
-  var isRequired = insertToolCall || state.retractedZ || !state.lengthCompensationActive  || (!isFirstSection() && getPreviousSection().isMultiAxis());
+  var isRequired = insertToolCall || state.retractedZ || !state.lengthCompensationActive || (!isFirstSection() && getPreviousSection().isMultiAxis());
   writeInitialPositioning(initialPosition, isRequired);
 
   if (isProbeOperation()) {
@@ -896,7 +897,7 @@ function activateMachine() {
     safeRetractDistance = getProperty("safeRetractDistance");
   }
 
-  if (revision >= 50294)  {
+  if (revision >= 50294) {
     activateAutoPolarMode({tolerance:tolerance / 2, optimizeType:OPTIMIZE_AXIS, expandCycles:getSetting("polarCycleExpandMode", EXPAND_ALL)});
   }
 
@@ -919,7 +920,7 @@ function getBodyLength(tool) {
     if (tool.number == section.getTool().number) {
       if (section.hasParameter("operation:tool_assemblyGaugeLength")) { // For Fusion
         return section.getParameter("operation:tool_assemblyGaugeLength", tool.bodyLength + tool.holderLength);
-      } else  { // Legacy products
+      } else { // Legacy products
         return section.getParameter("operation:tool_overallLength", tool.bodyLength + tool.holderLength);
       }
     }
@@ -1130,7 +1131,7 @@ function formatComment(text) {
     text = filterText(String(text), _permittedCommentChars);
   }
   text = String(text).substring(0, settings.comments.maximumLineLength - prefix.length - suffix.length);
-  return text != "" ?  prefix + text + suffix : "";
+  return text != "" ? prefix + text + suffix : "";
 }
 
 /**
@@ -1417,7 +1418,7 @@ function machineSimulation(parameters) {
   if (feed === undefined && typeof gMotionModal !== "undefined") {
     feed = gMotionModal.getCurrent() !== 0;
   }
-  var mode  = parameters.mode;
+  var mode = parameters.mode;
   var performToolChange = mode == TOOLCHANGE;
   if (mode !== undefined && ![TCPON, TCPOFF, TWPON, TWPOFF, TOOLCHANGE, RETRACTTOOLAXIS].includes(mode)) {
     error(subst("Mode '%1' is not supported.", mode));
@@ -1594,7 +1595,8 @@ function defineWorkPlane(_section, _setWorkPlane) {
 function isTCPSupportedByOperation(_section) {
   var _tcp = _section.getOptimizedTCPMode() == OPTIMIZE_NONE;
   if (!_section.isMultiAxis() && (settings.workPlaneMethod.useTiltedWorkplane ||
-    isSameDirection(machineConfiguration.getSpindleAxis(), getForwardDirection(_section)) ||
+    (machineConfiguration.isMultiAxisConfiguration() && settings.workPlaneMethod.optimizeType != undefined ?
+      getWorkPlaneMachineABC(_section, false).isZero() : isSameDirection(machineConfiguration.getSpindleAxis(), getForwardDirection(_section))) ||
     settings.workPlaneMethod.optimizeType == OPTIMIZE_HEADS ||
     settings.workPlaneMethod.optimizeType == OPTIMIZE_TABLES ||
     settings.workPlaneMethod.optimizeType == OPTIMIZE_BOTH)) {
@@ -2094,10 +2096,10 @@ function initializeSmoothing() {
         smoothing.level = smoothingSettings.roughing; // set roughing level
       } else {
         if (((stockToLeave >= thresholdSemiFinishing) && (stockToLeave < thresholdRoughing)) &&
-          ((verticalStockToLeave >= thresholdSemiFinishing) && (verticalStockToLeave  < thresholdRoughing))) {
+          ((verticalStockToLeave >= thresholdSemiFinishing) && (verticalStockToLeave < thresholdRoughing))) {
           smoothing.level = smoothingSettings.semi; // set semi level
         } else if (((stockToLeave >= thresholdFinishing) && (stockToLeave < thresholdSemiFinishing)) &&
-          ((verticalStockToLeave >= thresholdFinishing) && (verticalStockToLeave  < thresholdSemiFinishing))) {
+          ((verticalStockToLeave >= thresholdFinishing) && (verticalStockToLeave < thresholdSemiFinishing))) {
           smoothing.level = smoothingSettings.semifinishing; // set semi-finishing level
         } else {
           smoothing.level = smoothingSettings.finishing; // set finishing level
@@ -2180,7 +2182,7 @@ function writeProgramHeader() {
       writeComment("  " + localize("model") + ": " + model);
     }
     if (mDescription) {
-      writeComment("  " + localize("description") + ": "  + mDescription);
+      writeComment("  " + localize("description") + ": " + mDescription);
     }
   }
 
@@ -3063,7 +3065,7 @@ function writeInitialPositioning(position, isRequired, codes1, codes2) {
 
       cancelWorkPlane();
       positionABC(machineABC);
-      if ((getSetting("workPlaneMethod.useTiltedWorkplane", false) && tcp.isSupportedByMachine  && getCurrentDirection().isNonZero()) || tcp.isSupportedByOperation) {
+      if ((getSetting("workPlaneMethod.useTiltedWorkplane", false) && tcp.isSupportedByMachine && getCurrentDirection().isNonZero()) || tcp.isSupportedByOperation) {
         writeBlock(getOffsetCode(true), hOffset); // force TCP for prepositioning although the operation may not require it
       }
       writeBlock(modalCodes, gMotionModal.format(motionCode.multi), xOutput.format(prePosition.x), yOutput.format(prePosition.y), feed, additionalCodes[0]);
@@ -3466,7 +3468,7 @@ function getCommonCycle(x, y, z, r, c) {
 // <<<<< INCLUDED FROM include_files/drillCycles_fanuc.cpi
 // >>>>> INCLUDED FROM include_files/commonInspectionFunctions_fanuc.cpi
 var macroFormat = createFormat({prefix:(typeof inspectionVariables == "undefined" ? "#" : inspectionVariables.localVariablePrefix), decimals:0});
-var macroRoundingFormat =  (unit == MM) ? "[53]" : "[44]";
+var macroRoundingFormat = (unit == MM) ? "[53]" : "[44]";
 var isDPRNTopen = false;
 
 var WARNING_OUTDATED = 0;
