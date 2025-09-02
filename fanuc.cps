@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44191 10f6400eaf1c75a27c852ee82b57479e7a9134c0 $
-  $Date: 2025-08-21 13:23:15 $
+  $Revision: 44192 e342e4ca9f31b4c80e76467e990dd05b641d3c43 $
+  $Date: 2025-09-01 12:45:50 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -738,59 +738,6 @@ function onSectionEnd() {
 
   operationNeedsSafeStart = false; // reset for next section
 }
-
-// Start of onRewindMachine logic
-/** Allow user to override the onRewind logic. */
-function onRewindMachineEntry(_a, _b, _c) {
-  return false;
-}
-
-/** Retract to safe position before indexing rotaries. */
-function onMoveToSafeRetractPosition() {
-  writeRetract(Z);
-  // cancel TCP so that tool doesn't follow rotaries
-  if (currentSection.isMultiAxis() && tcp.isSupportedByOperation) {
-    disableLengthCompensation(false, "TCPC OFF");
-  }
-}
-
-/** Rotate axes to new position above reentry position */
-function onRotateAxes(_x, _y, _z, _a, _b, _c) {
-  // position rotary axes
-  xOutput.disable();
-  yOutput.disable();
-  zOutput.disable();
-  onRapid5D(_x, _y, _z, _a, _b, _c);
-  setCurrentABC(new Vector(_a, _b, _c));
-  machineSimulation({a:_a, b:_b, c:_c, coordinates:MACHINE});
-  xOutput.enable();
-  yOutput.enable();
-  zOutput.enable();
-}
-
-/** Return from safe position after indexing rotaries. */
-function onReturnFromSafeRetractPosition(_x, _y, _z) {
-  // reinstate TCP / tool length compensation
-  if (!state.lengthCompensationActive) {
-    writeBlock(getOffsetCode(), hFormat.format(tool.lengthOffset));
-  }
-
-  // position in XY
-  forceXYZ();
-  xOutput.reset();
-  yOutput.reset();
-  zOutput.disable();
-  if (highFeedMapping != HIGH_FEED_NO_MAPPING) {
-    onLinear(_x, _y, _z, highFeedrate);
-  } else {
-    onRapid(_x, _y, _z);
-  }
-  machineSimulation({x:_x, y:_y});
-  // position in Z
-  zOutput.enable();
-  invokeOnRapid(_x, _y, _z);
-}
-// End of onRewindMachine logic
 
 function onClose() {
   optionalSection = false;
@@ -3466,6 +3413,75 @@ function getCommonCycle(x, y, z, r, c) {
   }
 }
 // <<<<< INCLUDED FROM include_files/drillCycles_fanuc.cpi
+// >>>>> INCLUDED FROM include_files/rewind.cpi
+function onMoveToSafeRetractPosition() {
+  if (!getSetting("allowCancelTCPBeforeRetracting", false)) {
+    writeRetract(Z);
+  }
+  if (state.tcpIsActive) { // cancel TCP so that tool doesn't follow rotaries
+    if (typeof setTCP == "function") {
+      setTCP(false);
+    } else {
+      disableLengthCompensation(false);
+    }
+  }
+  writeRetract(Z);
+  if (getSetting("retract.homeXY.onIndexing", false)) {
+    writeRetract(settings.retract.homeXY.onIndexing);
+  }
+}
+
+/** Rotate axes to new position above reentry position */
+function onRotateAxes(_x, _y, _z, _a, _b, _c) {
+  // position rotary axes
+  xOutput.disable();
+  yOutput.disable();
+  zOutput.disable();
+  if (typeof unwindABC == "function") {
+    unwindABC(new Vector(_a, _b, _c), false);
+  }
+  onRapid5D(_x, _y, _z, _a, _b, _c);
+  setCurrentABC(new Vector(_a, _b, _c));
+  machineSimulation({a:_a, b:_b, c:_c, coordinates:MACHINE});
+  xOutput.enable();
+  yOutput.enable();
+  zOutput.enable();
+  forceXYZ();
+}
+
+/** Return from safe position after indexing rotaries. */
+function onReturnFromSafeRetractPosition(_x, _y, _z) {
+  if (!machineConfiguration.isHeadConfiguration()) {
+    writeInitialPositioning(new Vector(_x, _y, _z), true);
+    if (highFeedMapping != HIGH_FEED_NO_MAPPING) {
+      onLinear5D(_x, _y, _z, getCurrentDirection().x, getCurrentDirection().y, getCurrentDirection().z, highFeedrate);
+    } else {
+      onRapid5D(_x, _y, _z, getCurrentDirection().x, getCurrentDirection().y, getCurrentDirection().z);
+    }
+    machineSimulation({x:_x, y:_y, z:_z, a:getCurrentDirection().x, b:getCurrentDirection().y, c:getCurrentDirection().z});
+  } else {
+    if (tcp.isSupportedByOperation) {
+      if (typeof setTCP == "function") {
+        setTCP(true);
+      } else {
+        writeBlock(getOffsetCode(), hFormat.format(tool.lengthOffset));
+      }
+    }
+    forceXYZ();
+    xOutput.reset();
+    yOutput.reset();
+    zOutput.disable();
+    if (highFeedMapping != HIGH_FEED_NO_MAPPING) {
+      onLinear(_x, _y, _z, highFeedrate);
+    } else {
+      onRapid(_x, _y, _z);
+    }
+    machineSimulation({x:_x, y:_y});
+    zOutput.enable();
+    invokeOnRapid(_x, _y, _z);
+  }
+}
+// <<<<< INCLUDED FROM include_files/rewind.cpi
 // >>>>> INCLUDED FROM include_files/commonInspectionFunctions_fanuc.cpi
 var macroFormat = createFormat({prefix:(typeof inspectionVariables == "undefined" ? "#" : inspectionVariables.localVariablePrefix), decimals:0});
 var macroRoundingFormat = (unit == MM) ? "[53]" : "[44]";
