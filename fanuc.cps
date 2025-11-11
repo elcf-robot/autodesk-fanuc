@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44195 b7cb0c82774d12cdcc570eac00379624457b3298 $
-  $Date: 2025-09-16 09:45:33 $
+  $Revision: 44202 75321388625570b1eb8f09c1a5b057c8e188ae50 $
+  $Date: 2025-11-07 10:23:36 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -1341,7 +1341,7 @@ var isTcpOn;
   machineSimulation({x:toPreciseUnit(200, MM), y:toPreciseUnit(200, MM), coordinates:MACHINE, mode:TOOLCHANGE});
 */
 function machineSimulation(parameters) {
-  if (revision < 50198 || skipBlocks) {
+  if (revision < 50198 || skipBlocks || (getSimulationStreamPath() == "" && !debugSimulation)) {
     return; // return when post kernel revision is lower than 50198 or when skipBlocks is enabled
   }
   getAxisLimit = function(axis, limit) {
