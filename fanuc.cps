@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44202 75321388625570b1eb8f09c1a5b057c8e188ae50 $
-  $Date: 2025-11-07 10:23:36 $
+  $Revision: 44206 c3d8cac29f32e5bf09ad86bc88740282a753ba40 $
+  $Date: 2025-12-06 15:40:48 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -2560,7 +2560,7 @@ function subprogramIsValid(_section, subprogramId, subprogramType) {
 
           if (areSpatialBoxesSame(masterPosition, patternPosition) && areSpatialBoxesSame(masterBox, patternBox) && !section.isMultiAxis()) {
             subprogramState.incrementalSubprogram = subprogramState.incrementalSubprogram ? subprogramState.incrementalSubprogram : false;
-          } else if (!areSpatialBoxesTranslated(masterPosition, patternPosition) || !areSpatialBoxesTranslated(masterBox, patternBox)) {
+          } else if (!areSpatialBoxesTranslated(masterPosition, patternPosition) || !areSpatialBoxesTranslated(masterBox, patternBox) || section.isMultiAxis() || isTCPSupportedByOperation(section)) {
             validSubprogram = false;
             break;
           } else {
