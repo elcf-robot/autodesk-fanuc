@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44206 c3d8cac29f32e5bf09ad86bc88740282a753ba40 $
-  $Date: 2025-12-06 15:40:48 $
+  $Revision: 44207 3c29ebc507e8e59a0898c47558016451f197da94 $
+  $Date: 2025-12-17 08:29:21 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -1089,7 +1089,7 @@ function writeComment(text) {
   if (!text) {
     return;
   }
-  var comments = String(text).split(EOL);
+  var comments = String(text).split(/\r?\n/);
   for (comment in comments) {
     var _comment = formatComment(comments[comment]);
     if (_comment) {
