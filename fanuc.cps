@@ -1,11 +1,11 @@
 /**
-  Copyright (C) 2012-2025 by Autodesk, Inc.
+  Copyright (C) 2012-2026 by Autodesk, Inc.
   All rights reserved.
 
   FANUC post processor configuration.
 
-  $Revision: 44207 3c29ebc507e8e59a0898c47558016451f197da94 $
-  $Date: 2025-12-17 08:29:21 $
+  $Revision: 44209 3038eea6b5766ff091fd38cd623d9bc6a35075fa $
+  $Date: 2026-01-07 13:44:58 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -13,7 +13,7 @@
 description = "FANUC";
 vendor = "Fanuc";
 vendorUrl = "http://www.fanuc.com";
-legal = "Copyright (C) 2012-2025 by Autodesk, Inc.";
+legal = "Copyright (C) 2012-2026 by Autodesk, Inc.";
 certificationLevel = 2;
 minimumRevision = 45917;
 
@@ -3491,7 +3491,7 @@ var macroRoundingFormat = (unit == MM) ? "[53]" : "[44]";
 var isDPRNTopen = false;
 
 var WARNING_OUTDATED = 0;
-var toolpathIdFormat = createFormat({decimals:5, forceDecimal:true});
+var toolpathIdFormat = createFormat({decimals:5, type:FORMAT_REAL});
 var patternInstances = new Array();
 var initializePatternInstances = true; // initialize patternInstances array the first time inspectionGetToolpathId is called
 function inspectionGetToolpathId(section) {
