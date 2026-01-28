@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44209 3038eea6b5766ff091fd38cd623d9bc6a35075fa $
-  $Date: 2026-01-07 13:44:58 $
+  $Revision: 44210 ffe0eb09a5649b934d239c6145bde9ed20754f4a $
+  $Date: 2026-01-20 22:18:16 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -822,6 +822,9 @@ function activateMachine() {
   // identify if any of the rotary axes has TCP enabled
   var axes = [machineConfiguration.getAxisU(), machineConfiguration.getAxisV(), machineConfiguration.getAxisW()];
   tcp.isSupportedByMachine = axes.some(function(axis) {return axis.isEnabled() && axis.isTCPEnabled();}); // true if TCP is enabled on any rotary axis
+  if (tcp.isSupportedByMachine) {
+    bufferRotaryMoves = false; // disable bufferRotaryMoves if TCP is enabled on any rotary axis
+  }
 
   // save multi-axis feedrate settings from machine configuration
   var mode = machineConfiguration.getMultiAxisFeedrateMode();
