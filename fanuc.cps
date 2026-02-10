@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44210 ffe0eb09a5649b934d239c6145bde9ed20754f4a $
-  $Date: 2026-01-20 22:18:16 $
+  $Revision: 44212 c7ed61276584fb79ba090d81c124dfe96b1dcb9d $
+  $Date: 2026-02-04 16:48:49 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -3668,8 +3668,7 @@ function inspectionWriteWorkplaneTransform() {
 }
 
 function writeProbingToolpathInformation(cycleDepth) {
-  defineLocalVariable(1, inspectionGetToolpathId(currentSection));
-  writeln(formatLocalVariable("DPRNT[TOOLPATHID*", 1, "[35]]"));
+  writeln("DPRNT[TOOLPATHID*" + inspectionGetToolpathId(currentSection) + "]");
   if (isInspectionOperation()) {
     writeln("DPRNT[TOOLPATH*" + getParameter("operation-comment").toUpperCase().replace(/[()]/g, "") + "]");
   } else {
