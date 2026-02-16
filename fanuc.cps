@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44212 c7ed61276584fb79ba090d81c124dfe96b1dcb9d $
-  $Date: 2026-02-04 16:48:49 $
+  $Revision: 44213 2a132b5cae8d5827ea3f7d1f18907fb5fa628933 $
+  $Date: 2026-02-11 06:46:11 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -25,6 +25,9 @@ setCodePage("ascii");
 
 capabilities = CAPABILITY_MILLING | CAPABILITY_MACHINE_SIMULATION;
 tolerance = spatial(0.002, MM);
+if (typeof revision == "number") {
+  supportedFeatures |= revision >= 50328 ? FEATURE_MACHINE_ROTARY_ANGLES : 0;
+}
 
 minimumChordLength = spatial(0.25, MM);
 minimumCircularRadius = spatial(0.01, MM);
@@ -535,7 +538,7 @@ function onSection() {
   var wcsIsRequired = true;
   if (insertToolCall || operationNeedsSafeStart) {
     currentWorkOffset = undefined; // force work offset when changing tool
-    wcsIsRequired = newWorkOffset || insertToolCall || !operationNeedsSafeStart;
+    wcsIsRequired = newWorkOffset || insertToolCall || !operationNeedsSafeStart || getPreviousSection().strategy == "probe";
   }
   writeWCS(currentSection, wcsIsRequired);
 
@@ -3008,6 +3011,7 @@ function writeInitialPositioning(position, isRequired, codes1, codes2) {
     }
 
     if (machineConfiguration.isHeadConfiguration()) { // head/head head/table kinematics
+      cancelTransformation();
       var machineABC = currentSection.isMultiAxis() ? defineWorkPlane(currentSection, false) : getWorkPlaneMachineABC(currentSection, false);
       machineConfiguration.setToolLength(getSetting("workPlaneMethod.compensateToolLength", false) ? getBodyLength(currentSection.getTool()) : 0); // define the tool length for head adjustments
       var mode = currentSection.isOptimizedForMachine() ? TCP_XYZ_OPTIMIZED : TCP_XYZ;
