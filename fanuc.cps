@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44220 2b98af3e523dc041217e3860e4ea3f1fe5d949f9 $
-  $Date: 2026-04-01 17:40:42 $
+  $Revision: 44226 11d0840391cc5238c715a95f09fc1786ad2cef27 $
+  $Date: 2026-05-20 04:41:56 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -60,6 +60,7 @@ properties = {
       {title:"Only on tool change", id:"toolChange"}
     ],
     value: "true",
+    order: 1,
     scope: "post"
   },
   sequenceNumberStart: {
@@ -68,6 +69,7 @@ properties = {
     group      : "formats",
     type       : "integer",
     value      : 10,
+    order      : 2,
     scope      : "post"
   },
   sequenceNumberIncrement: {
@@ -76,6 +78,7 @@ properties = {
     group      : "formats",
     type       : "integer",
     value      : 5,
+    order      : 3,
     scope      : "post"
   },
   optionalStop: {
@@ -442,7 +445,7 @@ function onOpen() {
   }
 
   // absolute coordinates and feed per min
-  writeBlock(gAbsIncModal.format(90), gFeedModeModal.format(getProperty("useG95") ? 95 : 94), gPlaneModal.format(17), toolLengthCompOutput.format(49), gFormat.format(40), gFormat.format(80));
+  writeBlock(gAbsIncModal.format(90), gFeedModeModal.format(getProperty("useG95") ? 95 : 94), gPlaneModal.format(17), lengthCompOutput.format(lengthCompCodes.cancel), gFormat.format(40), gFormat.format(80));
   writeBlock(gUnitModal.format(unit == MM ? 21 : 20));
   validateCommonParameters();
 }
@@ -498,7 +501,7 @@ function onSection() {
       onCommand(COMMAND_STOP_SPINDLE); // stop spindle before retract during tool change
     }
     writeRetract(Z); // retract
-    disableLengthCompensation();
+    cancelLengthCompensation();
     if (isFirstSection()) {
       cancelWorkPlane(machineConfiguration.isMultiAxisConfiguration() && settings.workPlaneMethod.useTiltedWorkplane);
       if (machineConfiguration.isMultiAxisConfiguration()) {
@@ -758,7 +761,7 @@ function onClose() {
   onCommand(COMMAND_COOLANT_OFF);
   onCommand(COMMAND_STOP_SPINDLE);
   writeRetract(Z); // retract
-  disableLengthCompensation(true);
+  cancelLengthCompensation(true);
   forceWorkPlane();
   setWorkPlane(new Vector(0, 0, 0)); // reset working plane
   setSmoothing(false);
@@ -1715,9 +1718,6 @@ function writeToolCall(tool, insertToolCall) {
         forceWorkPlane();
       }
       onCommand(COMMAND_COOLANT_OFF); // turn off coolant on tool change
-      if (typeof disableLengthCompensation == "function") {
-        disableLengthCompensation(false);
-      }
     }
 
     if (tool.manualToolChange) {
@@ -2201,6 +2201,7 @@ properties.useSubroutines = {
     {title:"Patterns", id:"patterns"}
   ],
   value: "none",
+  order: 11,
   scope: "post"
 };
 properties.useFilesForSubprograms = {
@@ -2209,6 +2210,7 @@ properties.useFilesForSubprograms = {
   group      : "preferences",
   type       : "boolean",
   value      : false,
+  order      : 12,
   scope      : "post"
 };
 
@@ -2434,7 +2436,12 @@ function isSubProgramEnabledFor(subroutine) {
  * @param {Vector} _abc Machine axis angles
  */
 function subprogramDefine(_initialPosition, _abc) {
-  if (isSubProgramEnabledFor(NONE)) {
+  if (getSimulationStreamPath() != "" && getProperty("useSubroutines") != "none") {
+    warning(subst(localize("Property '%1' is disabled during machine simulation."), properties.useSubroutines.title));
+    setProperty("useSubroutines", "none");
+  }
+
+  if (getProperty("useSubroutines") == "none") {
     // Return early
     return;
   }
@@ -2900,8 +2907,8 @@ function setWorkPlane(abc) {
     if (getSetting("retract.homeXY.onIndexing", false)) {
       writeRetract(settings.retract.homeXY.onIndexing);
     }
-    if ((state.lengthCompensationActive || state.tcpIsActive) && typeof disableLengthCompensation == "function") {
-      disableLengthCompensation(); // cancel tool lenght compensation / TCP prior to output TWP
+    if (typeof cancelLengthCompensation == "function") {
+      cancelLengthCompensation(); // cancel tool lenght compensation / TCP prior to output TWP
     }
     if (settings.workPlaneMethod.useTiltedWorkplane) {
       onCommand(COMMAND_UNLOCK_MULTI_AXIS);
@@ -2940,8 +2947,8 @@ function writeRetract() {
     if (typeof cancelWCSRotation == "function" && getSetting("retract.cancelRotationOnRetracting", false)) { // cancel rotation before retracting
       cancelWCSRotation();
     }
-    if (typeof disableLengthCompensation == "function" && getSetting("allowCancelTCPBeforeRetracting", false) && state.tcpIsActive) {
-      disableLengthCompensation(); // cancel TCP before retracting
+    if (typeof setTCP == "function" && getSetting("allowCancelTCPBeforeRetracting", false)) {
+      setTCP(false); // cancel TCP before retracting
     }
     for (var i in retract.words) {
       var words = retract.singleLine ? retract.words : retract.words[i];
@@ -3010,8 +3017,8 @@ function writeInitialPositioning(position, isRequired, codes1, codes2) {
   forceModals(gMotionModal);
   writeStartBlocks(isRequired, function() {
     var modalCodes = formatWords(gAbsIncModal.format(90), gPlaneModal.format(17));
-    if (typeof disableLengthCompensation == "function") {
-      disableLengthCompensation(!isRequired); // cancel tool length compensation prior to enabling it, required when switching G43/G43.4 modes
+    if (typeof cancelLengthCompensation == "function") {
+      cancelLengthCompensation(!isRequired); // cancel tool length compensation prior to enabling it, required when switching G43/G43.4 modes
     }
 
     if (machineConfiguration.isHeadConfiguration()) { // head/head head/table kinematics
@@ -3027,19 +3034,19 @@ function writeInitialPositioning(position, isRequired, codes1, codes2) {
       cancelWorkPlane();
       positionABC(machineABC);
       if ((getSetting("workPlaneMethod.useTiltedWorkplane", false) && tcp.isSupportedByMachine && getCurrentDirection().isNonZero()) || tcp.isSupportedByOperation) {
-        writeBlock(getOffsetCode(true), hOffset); // force TCP for prepositioning although the operation may not require it
+        setTCP(true, true); // force TCP for prepositioning although the operation may not require it
       }
       writeBlock(modalCodes, gMotionModal.format(motionCode.multi), xOutput.format(prePosition.x), yOutput.format(prePosition.y), feed, additionalCodes[0]);
       machineSimulation({x:prePosition.x, y:prePosition.y});
       if (currentSection.isMultiAxis() || getSetting("headPositioningMethod", 0) == 1) {
-        var lengthComp = state.lengthCompensationActive ? {code:undefined, hOffset:undefined} : {code:getOffsetCode(), hOffset:hOffset};
+        var lengthComp = state.lengthCompensationActive ? {code:undefined, hOffset:undefined} : {code:getLengthCompCode(), hOffset:hOffset};
         writeBlock(modalCodes, gMotionModal.format(motionCode.single), lengthComp.code, zOutput.format(prePosition.z), lengthComp.hOffset, additionalCodes[1]);
         machineSimulation({z:prePosition.z});
       }
 
       if (!currentSection.isMultiAxis()) {
-        if (state.tcpIsActive && !tcp.isSupportedByOperation && typeof disableLengthCompensation == "function") {
-          disableLengthCompensation();
+        if (state.tcpIsActive && !tcp.isSupportedByOperation && typeof setTCP == "function") {
+          setTCP(false);
         }
         if (getSetting("workPlaneMethod.useTiltedWorkplane", false) && getCurrentDirection().isNonZero()) {
           var saveRetractedState = [state.retractedX, state.retractedY, state.retractedZ];
@@ -3054,10 +3061,10 @@ function writeInitialPositioning(position, isRequired, codes1, codes2) {
           if (getSetting("headPositioningMethod", 0) == 1) {
             writeBlock(modalCodes, gMotionModal.format(motionCode.multi), xOutput.format(position.x), yOutput.format(position.y));
             machineSimulation({x:position.x, y:position.y});
-            writeBlock(modalCodes, gMotionModal.format(motionCode.single), getOffsetCode(), zOutput.format(position.z), hOffset);
+            writeBlock(modalCodes, gMotionModal.format(motionCode.single), getLengthCompCode(), zOutput.format(position.z), hOffset);
             machineSimulation({z:position.z});
           } else {
-            writeBlock(modalCodes, getOffsetCode(), gMotionModal.format(motionCode.single), xOutput.format(position.x), yOutput.format(position.y), zOutput.format(position.z), hOffset);
+            writeBlock(modalCodes, getLengthCompCode(), gMotionModal.format(motionCode.single), xOutput.format(position.x), yOutput.format(position.y), zOutput.format(position.z), hOffset);
             machineSimulation({x:position.x, y:position.y, z:position.z});
           }
         }
@@ -3072,15 +3079,15 @@ function writeInitialPositioning(position, isRequired, codes1, codes2) {
         var prePosition = W.getTransposed().multiply(position);
         var angles = W.getEuler2(settings.workPlaneMethod.eulerConvention);
         setWorkPlane(angles);
-        writeBlock(modalCodes, gMotionModal.format(motionCode.multi), xOutput.format(prePosition.x), yOutput.format(prePosition.y), feed, additionalCodes[0]);
+        writeBlock(modalCodes, gMotionModal.format(motionCode.multi), xOutput.format(prePosition.x), yOutput.format(prePosition.y), feed, additionalCodes);
         machineSimulation({x:prePosition.x, y:prePosition.y});
         cancelWorkPlane();
-        writeBlock(getOffsetCode(), hOffset, additionalCodes[1]); // omit Z-axis output is desired
+        setTCP(true); // omit Z-axis output is desired
         forceAny(); // required to output XYZ coordinates in the following line
       } else {
         writeBlock(modalCodes, gMotionModal.format(motionCode.multi), xOutput.format(position.x), yOutput.format(position.y), feed, additionalCodes[0]);
         machineSimulation({x:position.x, y:position.y});
-        writeBlock(gMotionModal.format(motionCode.single), getOffsetCode(), zOutput.format(position.z), hOffset, additionalCodes[1]);
+        writeBlock(gMotionModal.format(motionCode.single), getLengthCompCode(), zOutput.format(position.z), hOffset, additionalCodes[1]);
         machineSimulation(tcp.isSupportedByOperation ? {x:position.x, y:position.y, z:position.z} : {z:position.z});
       }
     }
@@ -3120,40 +3127,58 @@ Matrix.getOrientationFromDirection = function (ijk) {
   return W;
 };
 // <<<<< INCLUDED FROM include_files/initialPositioning_fanuc.cpi
-// >>>>> INCLUDED FROM include_files/getOffsetCode_fanuc.cpi
-var toolLengthCompOutput = createOutputVariable({control : CONTROL_FORCE,
+// >>>>> INCLUDED FROM include_files/lengthCompFunctions_fanuc.cpi
+if (typeof lengthCompCodes === "undefined") {
+  var lengthCompCodes = {tool:43, tcp:43.4, tcpVector:43.5, cancel:49};
+}
+var lengthCompOutput = createOutputVariable({control : CONTROL_FORCE,
   onchange: function() {
-    state.tcpIsActive = toolLengthCompOutput.getCurrent() == 43.4 || toolLengthCompOutput.getCurrent() == 43.5;
-    state.lengthCompensationActive = toolLengthCompOutput.getCurrent() != 49;
+    state.tcpIsActive = lengthCompOutput.getCurrent() == lengthCompCodes.tcp || lengthCompOutput.getCurrent() == lengthCompCodes.tcpVector;
+    state.lengthCompensationActive = lengthCompOutput.getCurrent() != lengthCompCodes.cancel;
     machineSimulation({}); // update machine simulation TCP state
   }
 }, gFormat);
 
-function getOffsetCode(forceTCP) {
-  if (!getSetting("outputToolLengthCompensation", true) && toolLengthCompOutput.isEnabled()) {
+function getLengthCompCode(forceTCP) {
+  if (!getSetting("outputToolLengthCompensation", true) && lengthCompOutput.isEnabled()) {
     state.lengthCompensationActive = true; // always assume that length compensation is active
-    toolLengthCompOutput.disable();
+    lengthCompOutput.disable();
   }
-  var offsetCode = 43;
+  var lengthCompCode = lengthCompCodes.tool;
   if (tcp.isSupportedByOperation || forceTCP) {
-    offsetCode = machineConfiguration.isMultiAxisConfiguration() ? 43.4 : 43.5;
+    lengthCompCode = machineConfiguration.isMultiAxisConfiguration() ? lengthCompCodes.tcp : lengthCompCodes.tcpVector;
   }
-  return toolLengthCompOutput.format(offsetCode);
+  return lengthCompOutput.format(lengthCompCode);
 }
-// <<<<< INCLUDED FROM include_files/getOffsetCode_fanuc.cpi
-// >>>>> INCLUDED FROM include_files/disableLengthCompensation_fanuc.cpi
-function disableLengthCompensation(force) {
+
+function setTCP(_tcp, force) {
+  if (!force && state.tcpIsActive === _tcp) {
+    return;
+  }
+  cancelLengthCompensation();
+  if (_tcp) {
+    var hOffset = getSetting("outputToolLengthOffset", true) ? hFormat.format(tool.lengthOffset) : "";
+    writeBlock(getLengthCompCode(force), hOffset);
+    forceXYZ();
+  }
+}
+// <<<<< INCLUDED FROM include_files/lengthCompFunctions_fanuc.cpi
+// >>>>> INCLUDED FROM include_files/cancelLengthCompensation_fanuc.cpi
+function cancelLengthCompensation(force) {
+  if (!lengthCompCodes.cancel) {
+    return;
+  }
   if (state.lengthCompensationActive || force) {
     if (force) {
-      toolLengthCompOutput.reset();
+      lengthCompOutput.reset();
     }
     if (!getSetting("allowCancelTCPBeforeRetracting", false)) {
       validate(state.retractedZ, "Cannot cancel tool length compensation if the machine is not fully retracted.");
     }
-    writeBlock(toolLengthCompOutput.format(49));
+    writeBlock(lengthCompOutput.format(lengthCompCodes.cancel));
   }
 }
-// <<<<< INCLUDED FROM include_files/disableLengthCompensation_fanuc.cpi
+// <<<<< INCLUDED FROM include_files/cancelLengthCompensation_fanuc.cpi
 // >>>>> INCLUDED FROM include_files/getProgramNumber_fanuc.cpi
 function getProgramNumber() {
   if (typeof oFormat != "undefined" && getProperty("o8")) {
@@ -3433,11 +3458,7 @@ function onMoveToSafeRetractPosition() {
     writeRetract(Z);
   }
   if (state.tcpIsActive) { // cancel TCP so that tool doesn't follow rotaries
-    if (typeof setTCP == "function") {
-      setTCP(false);
-    } else {
-      disableLengthCompensation(false);
-    }
+    setTCP(false);
   }
   writeRetract(Z);
   if (getSetting("retract.homeXY.onIndexing", false)) {
@@ -3475,11 +3496,7 @@ function onReturnFromSafeRetractPosition(_x, _y, _z) {
     machineSimulation({x:_x, y:_y, z:_z, a:getCurrentDirection().x, b:getCurrentDirection().y, c:getCurrentDirection().z});
   } else {
     if (tcp.isSupportedByOperation) {
-      if (typeof setTCP == "function") {
-        setTCP(true);
-      } else {
-        writeBlock(getOffsetCode(), hFormat.format(tool.lengthOffset));
-      }
+      setTCP(true);
     }
     forceXYZ();
     xOutput.reset();
