@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44226 11d0840391cc5238c715a95f09fc1786ad2cef27 $
-  $Date: 2026-05-20 04:41:56 $
+  $Revision: 44227 2d605a9cc1536f48e73ceee9ddfbcbe5480ac34d $
+  $Date: 2026-05-26 11:43:01 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -1698,6 +1698,9 @@ function writeWCS(section, wcsIsRequired) {
       writeBlock(section.wcs);
     });
     currentWorkOffset = section.workOffset;
+    if (revision >= 50338 && getCurrentSectionId() > 0 && section.workOffset != getPreviousSection().workOffset) {
+      simulation.activateWorkCoordsForNextOperation();
+    }
   }
 }
 // <<<<< INCLUDED FROM include_files/writeWCS.cpi
@@ -3323,7 +3326,7 @@ function writeDrillCycle(cycle, x, y, z) {
       var dz = (gPlaneModal.getCurrent() == 17) ? cycle.backBoreDistance : 0;
       writeBlock(
         gRetractModal.format(98), gCycleModal.format(87),
-        getCommonCycle(x - dx, y - dy, z - dz, cycle.bottom, cycle.clearance),
+        getCommonCycle(x - dx, y - dy, z + dz, cycle.bottom, cycle.clearance),
         "Q" + xyzFormat.format(cycle.shift),
         "P" + milliFormat.format(P), // not optional
         feedOutput.format(F)
