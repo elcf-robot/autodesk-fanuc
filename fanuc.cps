@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44227 2d605a9cc1536f48e73ceee9ddfbcbe5480ac34d $
-  $Date: 2026-05-26 11:43:01 $
+  $Revision: 44228 0a52e3fd7f7363dd662d76be042f7eff76e4bebf $
+  $Date: 2026-06-05 18:39:08 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -344,12 +344,12 @@ var settings = {
     feedOutputVariable    : "F#" // specifies the syntax to output the feedrate as parameter
   },
   unwind: {
-    method        : 2, // 1 (move to closest 0 (G28)) or 2 (table does not move (G92))
-    codes         : [gFormat.format(92)], // formatted code(s) that will (virtually) unwind axis (G90 G28), (G92), etc.
+    method        : 1, // 1 (move to closest 0 (G28)) or 2 (table does not move (G92))
+    codes         : [gFormat.format(92.1)], // formatted code(s) that will (virtually) unwind axis (G90 G28), (G92.1), etc.
     workOffsetCode: "", // prefix for workoffset number if it is required to be output
     useAngle      : "true", // 'true' outputs angle with standard output variable, 'prefix' uses 'anglePrefix', 'false' does not output angle
     anglePrefix   : [], // optional prefixes for output angles specified as ["", "", "C"], use blank string if axis does not unwind
-    resetG90      : false // set to 'true' if G90 needs to be output after the unwind block
+    resetG90      : true // set to 'true' if G90 needs to be output after the unwind block
   },
   machineAngles: { // refer to https://cam.autodesk.com/posts/reference/classMachineConfiguration.html#a14bcc7550639c482492b4ad05b1580c8
     controllingAxis: ABC,
@@ -1617,7 +1617,7 @@ function positionABC(abc, force) {
 // <<<<< INCLUDED FROM include_files/positionABC.cpi
 // >>>>> INCLUDED FROM include_files/unwindABC.cpi
 function unwindABC(abc) {
-  if (settings.unwind == undefined || machineConfiguration.isHeadConfiguration()) {
+  if (settings.unwind == undefined) {
     return;
   }
   if (settings.unwind.method != 1 && settings.unwind.method != 2) {
@@ -1628,7 +1628,7 @@ function unwindABC(abc) {
   var axes = new Array(machineConfiguration.getAxisU(), machineConfiguration.getAxisV(), machineConfiguration.getAxisW());
   var currentDirection = getCurrentDirection();
   for (var i in axes) {
-    if (axes[i].isEnabled() && axes[i].isCyclic() && (settings.unwind.useAngle != "prefix" || settings.unwind.anglePrefix[axes[i].getCoordinate] != "")) {
+    if (axes[i].isEnabled() && axes[i].isCyclic() && axes[i].isTable() && (settings.unwind.useAngle != "prefix" || settings.unwind.anglePrefix[axes[i].getCoordinate] != "")) {
       var j = axes[i].getCoordinate();
 
       // only use the active axis in calculations
