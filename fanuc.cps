@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44228 0a52e3fd7f7363dd662d76be042f7eff76e4bebf $
-  $Date: 2026-06-05 18:39:08 $
+  $Revision: 44229 e780fd31175d3ecc1f0eb61106a1f48cbb5c06bf $
+  $Date: 2026-06-12 11:32:13 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -1328,6 +1328,8 @@ var WORK = "WORK CS";
 var MACHINE = "MACHINE CS";
 var MIN = "MIN";
 var MAX = "MAX";
+var SHORTEST = "SHORTEST";
+var PROGRAMMED = "PROGRAMMED";
 var WARNING_NON_RANGE = [0, 1, 2];
 var isTwpOn;
 var isTcpOn;
@@ -1345,9 +1347,11 @@ var isTcpOn;
  * @param {String} mode mode TCPON | TCPOFF | TWPON | TWPOFF | TOOLCHANGE | RETRACTTOOLAXIS
  * @param {String} coordinates WORK | MACHINE - if undefined, work coordinates will be used by default
  * @param {Number} eulerAngles the calculated Euler angles for the workplane
+ * @param {String} rotaryMode SHORTEST | PROGRAMMED - if undefined, the default rotary mode will be used
  * @example
   machineSimulation({a:abc.x, b:abc.y, c:abc.z, coordinates:MACHINE});
   machineSimulation({x:toPreciseUnit(200, MM), y:toPreciseUnit(200, MM), coordinates:MACHINE, mode:TOOLCHANGE});
+  machineSimulation({a:abc.x, b:abc.y, c:abc.z, coordinates:MACHINE, rotaryMode:SHORTEST});
 */
 function machineSimulation(parameters) {
   if (revision < 50198 || skipBlocks || (getSimulationStreamPath() == "" && !debugSimulation)) {
@@ -1374,6 +1378,7 @@ function machineSimulation(parameters) {
   var c = (isNaN(parameters.c) && parameters.c) ? error(rotaryAxesErrorMessage) : parameters.c;
   var coordinates = parameters.coordinates;
   var eulerAngles = parameters.eulerAngles;
+  var rotaryMode = parameters.rotaryMode;
   var feed = parameters.feed;
   if (feed === undefined && typeof gMotionModal !== "undefined") {
     feed = gMotionModal.getCurrent() !== 0;
@@ -1382,6 +1387,9 @@ function machineSimulation(parameters) {
   var performToolChange = mode == TOOLCHANGE;
   if (mode !== undefined && ![TCPON, TCPOFF, TWPON, TWPOFF, TOOLCHANGE, RETRACTTOOLAXIS].includes(mode)) {
     error(subst("Mode '%1' is not supported.", mode));
+  }
+  if (rotaryMode !== undefined && ![SHORTEST, PROGRAMMED].includes(rotaryMode)) {
+    error(subst(localize("Rotary mode '%1' is not supported."), rotaryMode));
   }
 
   // mode takes precedence over TCP/TWP states
@@ -1441,10 +1449,28 @@ function machineSimulation(parameters) {
       simulation.setMotionToRapid();
     }
 
+    var supportsRotaryMode = rotaryMode !== undefined && revision >= 50338;
+    var saveRotaryDirection = supportsRotaryMode ? simulation.getRotaryDirection() : undefined;
+    if (supportsRotaryMode) {
+      if (rotaryMode === SHORTEST) {
+        simulation.setRotaryToGoShortestDirection();
+      } else if (rotaryMode === PROGRAMMED) {
+        simulation.setRotaryToGoProgrammedDirection();
+      }
+    }
+
     if (coordinates != undefined && coordinates == MACHINE) {
       simulation.moveToTargetInMachineCoords();
     } else {
       simulation.moveToTargetInWorkCoords();
+    }
+
+    if (supportsRotaryMode) {
+      if (saveRotaryDirection === ROTARY_DIRECTION_AS_PROGRAMMED) {
+        simulation.setRotaryToGoProgrammedDirection();
+      } else {
+        simulation.setRotaryToGoShortestDirection();
+      }
     }
   }
   if (performToolChange) {
@@ -1675,6 +1701,7 @@ function unwindABC(abc) {
           gAbsIncModal.reset();
           writeBlock(gAbsIncModal.format(90));
         }
+        machineSimulation({[["a", "b", "c"][j]]:angle, coordinates:MACHINE, rotaryMode:SHORTEST}); // simulate unwind using shortest path
         outputs[j].reset();
 
         // set the current rotary axis angle from the unwind block
