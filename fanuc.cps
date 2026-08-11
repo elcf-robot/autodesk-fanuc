@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44229 e780fd31175d3ecc1f0eb61106a1f48cbb5c06bf $
-  $Date: 2026-06-12 11:32:13 $
+  $Revision: 44236 7dd2b329e0c10521b607996177a9f1456e654504 $
+  $Date: 2026-08-07 09:43:22 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -329,7 +329,7 @@ var settings = {
 
     differenceCriteria: "level", // options: "level", "tolerance", "both". Specifies criteria when output smoothing codes
     autoLevelCriteria : "stock", // use "stock" or "tolerance" to determine levels in automatic mode
-    cancelCompensation: true // tool length compensation must be canceled prior to changing the smoothing level
+    cancelCompensation: false // tool length compensation must be canceled prior to changing the smoothing level
   },
   retract: {
     cancelRotationOnRetracting: false, // specifies that rotations (G68) need to be canceled prior to retracting
