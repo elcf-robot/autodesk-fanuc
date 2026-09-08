@@ -4,8 +4,8 @@
 
   FANUC post processor configuration.
 
-  $Revision: 44236 7dd2b329e0c10521b607996177a9f1456e654504 $
-  $Date: 2026-08-07 09:43:22 $
+  $Revision: 44241 dfc999302e8789d1e445cafcc2556fa68b2d5722 $
+  $Date: 2026-09-02 11:49:45 $
 
   FORKID {04622D27-72F0-45d4-85FB-DB346FD1AE22}
 */
@@ -2349,16 +2349,16 @@ function subprogramEnd() {
         abc = getCurrentDirection();
       }
       setAbsIncMode(false, finalPosition, abc);
-
-      if (getProperty("useFilesForSubprograms")) {
-        var endBlockFiles = subprogramResolveSetting(settings.subprograms.endBlock.files);
-        writeln(endBlockFiles);
-      } else {
+      if (!getProperty("useFilesForSubprograms")) {
         var endBlockEmbedded = subprogramResolveSetting(settings.subprograms.endBlock.embedded);
         writeln(endBlockEmbedded);
         writeln("");
         subprogramState.subprograms += getRedirectionBuffer();
       }
+    }
+    if (getProperty("useFilesForSubprograms")) {
+      var endBlockFiles = subprogramResolveSetting(settings.subprograms.endBlock.files);
+      writeln(endBlockFiles);
     }
     forceAny();
     subprogramState.newSubprogram = false;
@@ -2431,7 +2431,7 @@ function getDefinedCycleSubprogram(subprogramId, initialPosition, finalPosition)
  */
 function defineNewSubprogram(section, subprogramId, subprogramType, initialPosition, finalPosition) {
   // determine if this is valid for creating a subprogram
-  isValid = subprogramIsValid(section, subprogramId, subprogramType);
+  var isValid = subprogramIsValid(section, subprogramId, subprogramType);
   var subprogram = isValid ? subprogram = ++subprogramState.lastSubprogram : undefined;
   subprogramState.definedSubprograms.push({
     type           : subprogramType,
